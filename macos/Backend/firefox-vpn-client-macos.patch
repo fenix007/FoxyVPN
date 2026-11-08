@@ -1,0 +1,329 @@
+diff --git a/cmd/proxy-demo/main.go b/cmd/proxy-demo/main.go
+index 7e0a776..a9588e2 100644
+--- a/cmd/proxy-demo/main.go
++++ b/cmd/proxy-demo/main.go
+@@ -161,6 +161,10 @@ func logAddr(addr net.Addr) string {
+ }
+ 
+ func main() {
++	if err := watchParentProcess(); err != nil {
++		logError("%v", err)
++		os.Exit(2)
++	}
+ 	flag.Usage = func() {
+ 		out := flag.CommandLine.Output()
+ 		fmt.Fprintln(out, "Usage of proxy-demo:")
+@@ -178,6 +182,7 @@ func main() {
+ 	listenFlag := flag.String("listen", "127.0.0.1:1080", "Local SOCKS5 listen address")
+ 	loginFlag := flag.Bool("login", false, "Force fresh login (ignore saved refresh token)")
+ 	sessionTokenFlag := flag.String("session-token", "", "Session token, or path to a .txt file with one token per line; tokens rotate automatically when their monthly quota runs out")
++	waitSessionFlag := flag.Bool("wait-session-confirmed", false, "Wait for Firefox sign-in confirmation; reads one session token from stdin")
+ 	printInfoFlag := flag.Bool("print-info", false, "Print user info, quota info, and server list, then exit")
+ 	proxyFlag := flag.String("proxy", "", "Exact upstream proxy URL or host:port; mutually exclusive with -country")
+ 	countryFlag := flag.String("country", "", "Mozilla VPN location country code or name used when selecting an upstream proxy")
+@@ -216,6 +221,24 @@ func main() {
+ 		os.Exit(1)
+ 	}
+ 
++	if *waitSessionFlag {
++		data, err := io.ReadAll(io.LimitReader(os.Stdin, 65))
++		session := string(data)
++		_, decodeErr := hex.DecodeString(session)
++		if err != nil || len(session) != 64 || decodeErr != nil {
++			logError("sign-in confirmation requires one valid session token on stdin")
++			os.Exit(2)
++		}
++		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
++		err = waitForSessionConfirmation(ctx, session, 3*time.Second, vpnclient.FxaSessionVerified)
++		cancel()
++		if err != nil {
++			logError("sign-in confirmation failed: %v", err)
++			os.Exit(2)
++		}
++		return
++	}
++
+ 	proxyFlagValue := strings.TrimSpace(*proxyFlag)
+ 	countryFlagValue := strings.TrimSpace(*countryFlag)
+ 	if proxyFlagValue != "" && countryFlagValue != "" {
+@@ -770,17 +793,26 @@ func (p *sessionTokenPool) size() int {
+ // activateNextPoolToken exchanges the next session token from the pool for
+ // OAuth tokens, skipping tokens that FxA rejects.
+ func activateNextPoolToken(pool *sessionTokenPool) (*runtimeAuth, error) {
++	return activateNextPoolTokenWith(pool, vpnclient.FxaOAuthToken)
++}
++
++func activateNextPoolTokenWith(pool *sessionTokenPool, exchange func(context.Context, string) (*vpnclient.TokenResponse, error)) (*runtimeAuth, error) {
++	var lastError error
+ 	for {
+ 		sessionToken, index, total, ok := pool.next()
+ 		if !ok {
++			if lastError != nil {
++				return nil, fmt.Errorf("Firefox session activation failed: %w", lastError)
++			}
+ 			return nil, errTokenPoolExhausted
+ 		}
+ 		fmt.Printf("Activating session token %d/%d... ", index, total)
+ 		ctx, cancel := context.WithTimeout(context.Background(), apiRequestTimeout)
+-		token, err := vpnclient.FxaOAuthToken(ctx, sessionToken)
++		token, err := exchange(ctx, sessionToken)
+ 		cancel()
+ 		if err != nil {
+ 			fmt.Printf("failed: %v\n", err)
++			lastError = err
+ 			continue
+ 		}
+ 		fmt.Println("OK")
+@@ -957,6 +989,10 @@ func obtainOAuthToken(forceLogin bool) (*vpnclient.TokenResponse, string, time.T
+ 		}
+ 	}
+ 
++	if err := interactiveLoginError(); err != nil {
++		logError("%v", err)
++		os.Exit(2)
++	}
+ 	email, password := promptCredentials()
+ 
+ 	fmt.Print("Logging in... ")
+@@ -1026,6 +1062,52 @@ func verifySessionInteractively(email, sessionToken, verificationMethod string)
+ 	}
+ }
+ 
++func waitForSessionConfirmation(ctx context.Context, session string, interval time.Duration, check func(context.Context, string) (bool, error)) error {
++	for {
++		ready, err := check(ctx, session)
++		if err != nil {
++			return err
++		}
++		if ready {
++			return nil
++		}
++		select {
++		case <-ctx.Done():
++			return fmt.Errorf("confirm Firefox sign-in in the login window or email, then try again: %w", ctx.Err())
++		case <-time.After(interval):
++		}
++	}
++}
++
++func interactiveLoginError() error {
++	if os.Getenv("FOXYVPN_NONINTERACTIVE") == "1" {
++		return errors.New("no usable saved Firefox Account token; sign in again from the FoxyVPN app")
++	}
++	return nil
++}
++
++// Exit even if macOS kills the UI before it can terminate its child process.
++func watchParentProcess() error {
++	raw := os.Getenv("FOXYVPN_PARENT_PID")
++	if raw == "" {
++		return nil
++	}
++	parent, err := strconv.Atoi(raw)
++	if err != nil || parent <= 1 || parent != os.Getppid() {
++		return errors.New("FoxyVPN parent process is no longer running")
++	}
++	go func() {
++		ticker := time.NewTicker(250 * time.Millisecond)
++		defer ticker.Stop()
++		for range ticker.C {
++			if os.Getppid() != parent {
++				os.Exit(0)
++			}
++		}
++	}()
++	return nil
++}
++
+ func promptCredentials() (string, string) {
+ 	reader := bufio.NewReader(os.Stdin)
+ 	fmt.Println("=== Firefox VPN Proxy Demo ===")
+diff --git a/cmd/proxy-demo/main_test.go b/cmd/proxy-demo/main_test.go
+index 3e4a002..afabaae 100644
+--- a/cmd/proxy-demo/main_test.go
++++ b/cmd/proxy-demo/main_test.go
+@@ -62,6 +62,52 @@ func TestObtainOAuthTokenUsesValidCachedAccessToken(t *testing.T) {
+ 	}
+ }
+ 
++func TestInteractiveLoginErrorInNoninteractiveMode(t *testing.T) {
++	t.Setenv("FOXYVPN_NONINTERACTIVE", "1")
++	err := interactiveLoginError()
++	if err == nil {
++		t.Fatal("expected noninteractive login error")
++	}
++	if !strings.Contains(err.Error(), "sign in again from the FoxyVPN app") {
++		t.Fatalf("unexpected error: %v", err)
++	}
++}
++
++func TestInteractiveLoginAllowedByDefault(t *testing.T) {
++	t.Setenv("FOXYVPN_NONINTERACTIVE", "")
++	if err := interactiveLoginError(); err != nil {
++		t.Fatalf("expected interactive login to remain available, got %v", err)
++	}
++}
++
++func TestFailedActivationPreservesCauseInsteadOfReportingQuota(t *testing.T) {
++	pool := &sessionTokenPool{tokens: []string{"synthetic"}}
++	cause := errors.New("Unconfirmed session")
++	_, err := activateNextPoolTokenWith(pool, func(context.Context, string) (*vpnclient.TokenResponse, error) {
++		return nil, cause
++	})
++	if !errors.Is(err, cause) || errors.Is(err, errTokenPoolExhausted) {
++		t.Fatalf("lost auth error: %v", err)
++	}
++}
++
++func TestConfirmationWaitsForSessionAndHonorsCancellation(t *testing.T) {
++	calls := 0
++	err := waitForSessionConfirmation(context.Background(), "synthetic", time.Millisecond, func(context.Context, string) (bool, error) {
++		calls++
++		return calls == 3, nil
++	})
++	if err != nil || calls != 3 {
++		t.Fatalf("did not wait for confirmation: calls=%d err=%v", calls, err)
++	}
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	err = waitForSessionConfirmation(ctx, "synthetic", time.Hour, func(context.Context, string) (bool, error) { return false, nil })
++	if !errors.Is(err, context.Canceled) {
++		t.Fatalf("confirmation ignored cancellation: %v", err)
++	}
++}
++
+ func TestHandshakeSOCKS5DomainConnect(t *testing.T) {
+ 	t.Parallel()
+ 
+diff --git a/firefox_identity_test.go b/firefox_identity_test.go
+index afa46ce..4b24645 100644
+--- a/firefox_identity_test.go
++++ b/firefox_identity_test.go
+@@ -107,6 +107,43 @@ func TestFxAEndpointsUseFirefoxIdentity(t *testing.T) {
+ 	}
+ }
+ 
++func TestSessionVerificationRequiresConfirmedSessionNotJustEmail(t *testing.T) {
++	for _, tc := range []struct {
++		name string
++		body string
++		want bool
++	}{
++		{"email only", `{"details":{"accountEmailVerified":true,"sessionVerified":false}}`, false},
++		{"session only", `{"details":{"accountEmailVerified":false,"sessionVerified":true}}`, false},
++		{"insufficient assurance", `{"details":{"accountEmailVerified":true,"sessionVerified":true,"sessionVerificationMeetsMinimumAAL":false}}`, false},
++		{"legacy flag only", `{"details":{"verified":true}}`, false},
++		{"confirmed", `{"details":{"accountEmailVerified":true,"sessionVerified":true,"sessionVerificationMeetsMinimumAAL":true}}`, true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			useIdentityTestClient(t, identityTestTransport(func(req *http.Request) (*http.Response, error) {
++				if req.Method != "GET" || req.URL.Path != "/v1/session/status" || !strings.HasPrefix(req.Header.Get("Authorization"), "Hawk ") {
++					t.Fatal("session status request is not authenticated")
++				}
++				return identityTestResponse(req, 200, tc.body), nil
++			}), "")
++			got, err := FxaSessionVerified(context.Background(), strings.Repeat("ab", 32))
++			if err != nil || got != tc.want {
++				t.Fatalf("verified = %v, err = %v, want %v", got, err, tc.want)
++			}
++		})
++	}
++}
++
++func TestSessionVerificationDoesNotAcceptInvalidSession(t *testing.T) {
++	useIdentityTestClient(t, identityTestTransport(func(req *http.Request) (*http.Response, error) {
++		return identityTestResponse(req, 401, `{"errno":110}`), nil
++	}), "")
++	verified, err := FxaSessionVerified(context.Background(), strings.Repeat("ab", 32))
++	if verified || err == nil || !strings.Contains(err.Error(), "errno 110") {
++		t.Fatalf("invalid session accepted: verified=%v, err=%v", verified, err)
++	}
++}
++
+ func TestFxAChallengeRetryKeepsIdentity(t *testing.T) {
+ 	for _, override := range []string{"", "CustomFirefox/1.0"} {
+ 		t.Run(override, func(t *testing.T) {
+diff --git a/fxa.go b/fxa.go
+index e45793a..0797517 100644
+--- a/fxa.go
++++ b/fxa.go
+@@ -298,6 +298,47 @@ func fxaVerifySession(ctx context.Context, sessionToken, code string) error {
+ 	return nil
+ }
+ 
++// FxaSessionVerified checks the session itself, not just email ownership.
++func FxaSessionVerified(ctx context.Context, sessionToken string) (bool, error) {
++	hawkID, hawkKey, err := deriveHawkCredentials(sessionToken, "sessionToken")
++	if err != nil {
++		return false, err
++	}
++	endpoint := fxaAuthServer + "/session/status"
++	resp, err := fxaDo(ctx, func() (*http.Request, error) {
++		header, err := hawkHeader("GET", endpoint, hawkID, hawkKey, "")
++		if err != nil {
++			return nil, err
++		}
++		req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
++		if err != nil {
++			return nil, err
++		}
++		req.Header.Set("Authorization", header)
++		applyFxAHeaders(req)
++		return req, nil
++	})
++	if err != nil {
++		return false, err
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		return false, newFxaAPIError(resp.StatusCode, []byte(readErrorBody(resp.Body)))
++	}
++	var status struct {
++		Details struct {
++			AccountEmailVerified bool  `json:"accountEmailVerified"`
++			SessionVerified      bool  `json:"sessionVerified"`
++			MeetsAAL             *bool `json:"sessionVerificationMeetsMinimumAAL"`
++		} `json:"details"`
++	}
++	if err := json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&status); err != nil {
++		return false, err
++	}
++	return status.Details.AccountEmailVerified && status.Details.SessionVerified &&
++		(status.Details.MeetsAAL == nil || *status.Details.MeetsAAL), nil
++}
++
+ func fxaOAuthToken(ctx context.Context, sessionToken string) (*TokenResponse, error) {
+ 	hawkID, hawkKey, err := deriveHawkCredentials(sessionToken, "sessionToken")
+ 	if err != nil {
+diff --git a/tokens.go b/tokens.go
+index c9f350e..675612e 100644
+--- a/tokens.go
++++ b/tokens.go
+@@ -28,6 +28,9 @@ func (s *SavedTokens) AccessTokenValid() bool {
+ }
+ 
+ func tokenFilePath() string {
++	if stateDir := os.Getenv("FOXYVPN_STATE_DIR"); stateDir != "" {
++		return filepath.Join(stateDir, tokenFileName)
++	}
+ 	home, err := os.UserHomeDir()
+ 	if err != nil {
+ 		return tokenFileName
+diff --git a/tokens_test.go b/tokens_test.go
+index 6d5983b..0720ddc 100644
+--- a/tokens_test.go
++++ b/tokens_test.go
+@@ -37,3 +37,13 @@ func TestWritePrivateFileReplacesContentAndTightensPermissions(t *testing.T) {
+ 		t.Fatalf("expected token file mode 0600, got %o", got)
+ 	}
+ }
++
++func TestTokenFilePathUsesFoxyVPNStateDirectory(t *testing.T) {
++	dir := t.TempDir()
++	t.Setenv("FOXYVPN_STATE_DIR", dir)
++
++	want := filepath.Join(dir, tokenFileName)
++	if got := TokenFilePath(); got != want {
++		t.Fatalf("expected token path %q, got %q", want, got)
++	}
++}

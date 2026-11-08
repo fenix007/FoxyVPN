@@ -18,6 +18,15 @@
 
 <br>
 
+## About this fork
+
+This repository is [fenix007/FoxyVPN](https://github.com/fenix007/FoxyVPN),
+based on [Vauth/FoxyVPN](https://github.com/Vauth/FoxyVPN). It preserves the
+upstream Android client and adds a native SwiftUI client for Apple Silicon Macs,
+including Firefox Account sign-in, country selection, a TCP/DNS tunnel, and
+traffic statistics. The macOS client is experimental; read its
+[setup and known limitations](macos/README.md) before use.
+
 ## ✨ Features
 
 ### Core & Privacy
@@ -63,7 +72,7 @@
 ## 🚀 Getting Started
 
 1. **Get a Firefox account**: If you don't already have one, create an account at [accounts.firefox.com](https://accounts.firefox.com).
-2. **Download & Install**: Grab the latest APK matching your device (`arm64-v8a`, `armeabi-v7a`, or `universal`) from the [Releases](https://github.com/Vauth/FoxyVPN/releases) page.
+2. **Download & Install (Android)**: Grab the latest APK matching your device (`arm64-v8a`, `armeabi-v7a`, or `universal`) from the [upstream Android releases](https://github.com/Vauth/FoxyVPN/releases) page. For macOS, use the source build below.
 3. **Sign In**: Tap "Sign in with Firefox" to authenticate via the in-app browser.
 4. **Connect**: Choose a server location and tap the power button.
 
@@ -71,6 +80,19 @@
 > Access, entitlement, quota, and geographic availability are controlled by Mozilla. FoxyVPN connects directly to official endpoints and respects account quotas.
 
 <br>
+
+## macOS (initial native port)
+
+An Apple Silicon macOS client is available in [`macos/`](macos/README.md).
+It provides Firefox Account sign-in and a TUN connection for TCP and DNS;
+other UDP traffic is not supported in this initial version.
+
+```sh
+macos/scripts/build-app.sh --install
+open "$HOME/Applications/FoxyVPN.app"
+```
+
+See the [macOS setup and limitations](macos/README.md) before connecting.
 
 ## 🛠 Building from Source
 
@@ -82,7 +104,7 @@
 ### Build Instructions
 1. Clone the repository:
    ```bash
-   git clone https://github.com/Vauth/FoxyVPN.git
+   git clone https://github.com/fenix007/FoxyVPN.git
    cd FoxyVPN
    ```
 

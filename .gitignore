@@ -17,3 +17,8 @@ app/libs/*.aar
 
 
 .kotlin/
+
+# Native macOS build products and downloaded toolchains
+macos/.build/
+macos/dist/
+macos/.swiftpm/
