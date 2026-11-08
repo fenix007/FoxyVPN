@@ -22,3 +22,9 @@ app/libs/*.aar
 macos/.build/
 macos/dist/
 macos/.swiftpm/
+
+# Windows build products and local toolchains
+windows/.build/
+windows/dist/
+windows/**/bin/
+windows/**/obj/

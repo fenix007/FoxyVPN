@@ -24,8 +24,8 @@ This repository is [fenix007/FoxyVPN](https://github.com/fenix007/FoxyVPN),
 based on [Vauth/FoxyVPN](https://github.com/Vauth/FoxyVPN). It preserves the
 upstream Android client and adds a native SwiftUI client for Apple Silicon Macs,
 including Firefox Account sign-in, country selection, a TCP/DNS tunnel, and
-traffic statistics. The macOS client is experimental; read its
-[setup and known limitations](macos/README.md) before use.
+traffic statistics. An experimental [Windows client](windows/README.md) is also
+available. Read the macOS [setup and known limitations](macos/README.md) before use.
 
 ## ✨ Features
 
@@ -93,6 +93,18 @@ open "$HOME/Applications/FoxyVPN.app"
 ```
 
 See the [macOS setup and limitations](macos/README.md) before connecting.
+
+## Windows (experimental)
+
+A native Windows 10/11 client is available in [`windows/`](windows/README.md),
+with Firefox Account sign-in, country selection, IPv4/IPv6 TCP and DNS tunneling,
+and traffic statistics. Build a portable x64 or ARM64 ZIP:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows/scripts/build.ps1
+```
+
+See the [Windows prerequisites, usage and limitations](windows/README.md).
 
 ## 🛠 Building from Source
 

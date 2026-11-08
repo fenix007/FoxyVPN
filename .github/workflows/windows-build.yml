@@ -1,0 +1,37 @@
+name: Windows build
+
+on:
+  push:
+    branches: [main]
+    paths: ["windows/**", "macos/Backend/**", ".github/workflows/windows-build.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["windows/**", "macos/Backend/**", ".github/workflows/windows-build.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and check Windows x64 package
+        shell: pwsh
+        run: ./windows/scripts/build.ps1
+      # Complete archives remain local to the runner: the protocol backend's
+      # redistribution license is unresolved (windows/THIRD_PARTY.md).
