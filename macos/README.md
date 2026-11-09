@@ -87,11 +87,15 @@ or IPv4/IPv6 CIDR ranges, one per line. A domain includes its subdomains. Use
 starting with `#`, and `domain:example.com` entries are accepted. The list is
 limited to 2,048 entries and 32 KB.
 
-**Добавить список UnRKN** downloads the current plain domain list from
-[UnRKN/ru-blocklist](https://github.com/UnRKN/ru-blocklist) into the editor. Review
+**Добавить список UnRKN** downloads a pinned plain domain list from
+[UnRKN/ru-blocklist](https://github.com/UnRKN/ru-blocklist/tree/155441a59bbe913f9ef494cc67e909c3d88ad326)
+into the editor. Review
 the entries, then click **Сохранить**. The app does not download this list in the
-background or silently replace your exceptions. To refresh it, import it again;
-new entries are merged with your list without removing existing entries.
+background or silently replace your exceptions. The source revision is pinned
+in the app; updating the repository does not change your routing rules. You can
+paste newer domain lists manually. Imported entries merge with existing entries.
+Single-label domains such as `com` are rejected; use the explicit zone toggle
+for `.ru`, `.su`, and `.рф`.
 
 Settings are saved on this Mac and take effect on the next VPN connection.
 Other traffic continues through the VPN. DNS for excluded domains uses the

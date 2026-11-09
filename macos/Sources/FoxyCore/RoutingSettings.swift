@@ -73,7 +73,9 @@ public struct RoutingSettings: Codable, Equatable, Sendable {
               let ascii = URL(string: "https://" + name)?.host?.lowercased(),
               ascii.utf8.count <= 253, ascii.contains(where: { $0.isLetter }) else { return nil }
         let labels = ascii.split(separator: ".", omittingEmptySubsequences: false)
-        guard labels.allSatisfy({ label in
+        // Whole zones are available only through the explicit built-in toggle.
+        // A pasted/downloaded list must not silently bypass every .com site.
+        guard labels.count >= 2, labels.allSatisfy({ label in
             (1...63).contains(label.utf8.count) &&
             label.range(of: #"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$"#, options: .regularExpression) != nil
         }) else { return nil }

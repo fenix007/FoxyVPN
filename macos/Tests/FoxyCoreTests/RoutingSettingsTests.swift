@@ -17,7 +17,7 @@ struct RoutingSettingsTests {
     }
 
     @Test(arguments: ["https://example.com", "example.com/path", "example.com:443", "foo..com", "-foo.com",
-        "example.com;id", "1.2.3.999", "203.0.113.5/33", "2001:db8::/129", "::1%en0", "*", "geosite:ru"])
+        "example.com;id", "1.2.3.999", "203.0.113.5/33", "2001:db8::/129", "::1%en0", "*", "geosite:ru", "com", "net", "ru"])
     func rejectsInvalidEntries(_ entry: String) {
         #expect(throws: Error.self) { try RoutingSettings.parse(entry, bypassRussianDomains: false) }
     }

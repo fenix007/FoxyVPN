@@ -2,6 +2,12 @@ import SwiftUI
 import Combine
 import FoxyCore
 
+private enum UnRKNSource {
+    // Reviewed snapshot; upstream changes must not broaden routing silently.
+    static let revision = "155441a59bbe913f9ef494cc67e909c3d88ad326"
+    static let url = URL(string: "https://raw.githubusercontent.com/UnRKN/ru-blocklist/\(revision)/ru-blocklist.txt")!
+}
+
 private final class RoutingDraft: ObservableObject {
     @Published var bypassRussianDomains: Bool
     @Published var entries: String
@@ -48,9 +54,9 @@ struct RoutingSettingsView: View {
                     Button(draft.loading ? "Загрузка…" : "Добавить список UnRKN") {
                         Task { await importUnRKN() }
                     }.disabled(draft.loading)
-                    Link("Посмотреть список ↗", destination: URL(string: "https://github.com/UnRKN/ru-blocklist")!)
+                    Link("Посмотреть список ↗", destination: UnRKNSource.url)
                 }
-                Text("Список российских сервисов, которым нужен прямой доступ. Добавится в поле выше; изменения вступят в силу после сохранения.")
+                Text("Снимок списка российских сервисов для прямого доступа. Добавится в поле выше; изменения вступят в силу после сохранения.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -80,8 +86,7 @@ struct RoutingSettingsView: View {
         draft.error = nil
         defer { draft.loading = false }
         do {
-            let url = URL(string: "https://raw.githubusercontent.com/UnRKN/ru-blocklist/refs/heads/main/ru-blocklist.txt")!
-            let request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
+            let request = URLRequest(url: UnRKNSource.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 20)
             let (data, response) = try await URLSession.shared.data(for: request)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   !data.isEmpty, data.count <= 32 * 1024,

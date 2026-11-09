@@ -7,7 +7,7 @@ case "$configuration" in release|debug) ;; *) echo "Invalid configuration" >&2; 
 cd "$project_dir"
 swift build -c "$configuration"
 bin_dir="$(swift build -c "$configuration" --show-bin-path)"
-app="$project_dir/dist/FoxyVPN.app"
+app="${FOXYVPN_APP_OUTPUT:-$project_dir/dist/FoxyVPN.app}"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 755 "$bin_dir/FoxyVPN" "$app/Contents/MacOS/FoxyVPN"
 install -m 755 "$bin_dir/foxyvpn-tunnel" "$app/Contents/Resources/foxyvpn-tunnel"
