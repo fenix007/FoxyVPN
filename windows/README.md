@@ -4,7 +4,18 @@ Experimental native Windows Forms client for Windows 10/11 x64, with a build
 option for Windows ARM64. Firefox Account sign-in uses Edge WebView2. The local
 protocol backend and sing-box create a dual-stack TUN connection for TCP and DNS.
 
-## Download a GitHub Actions build
+## Download a release
+
+Download [FoxyVPN for Windows x64](https://github.com/fenix007/FoxyVPN/releases/latest/download/FoxyVPN-windows-x64.zip)
+from the [latest release](https://github.com/fenix007/FoxyVPN/releases/latest),
+extract the entire ZIP into a local folder and run `FoxyVPN.exe`. Keep all files
+together. Public release downloads do not require a GitHub sign-in and do not
+expire after 30 days. SHA-256 checksums are attached to the same release.
+
+No .NET installation or development tools are needed. Microsoft Edge WebView2
+Runtime is required, and is normally already present on Windows 10/11.
+
+## Download a development build from GitHub Actions
 
 1. Open the repository's **Actions** tab and select **Windows build**.
 2. Open a successful run, or click **Run workflow** to build the selected branch.
@@ -20,7 +31,7 @@ The artifact includes a `.zip.sha256` checksum and is retained for 30 days.
 This is a portable Windows 10/11 x64 build; no .NET installation or build tools
 are required on the destination PC. Microsoft Edge WebView2 Runtime is required,
 and is normally already present on Windows 10/11. The workflow does not create
-a GitHub Release.
+a GitHub Release; tagged versions are published by **Desktop release** instead.
 
 ## Build locally
 

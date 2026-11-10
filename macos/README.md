@@ -6,6 +6,11 @@ Firefox Accounts / Mozilla Guardian service and an HTTP/2 CONNECT transport.
 
 ## Install a ready-made build
 
+Download [FoxyVPN for Apple Silicon](https://github.com/fenix007/FoxyVPN/releases/latest/download/FoxyVPN-macos-arm64.dmg)
+from the [latest release](https://github.com/fenix007/FoxyVPN/releases/latest).
+The release includes SHA-256 checksums. Public release downloads do not require
+signing in to GitHub and do not expire after 30 days.
+
 For a non-developer, share `FoxyVPN-<version>-macos-arm64.dmg` produced by the
 packaging command below. The recipient needs an Apple Silicon Mac with macOS 14
 or newer; Intel Macs are not supported. No Xcode, Go, Homebrew or Terminal
@@ -21,7 +26,7 @@ commands are needed to install:
 
 The DMG includes [Russian installation instructions](INSTALL.ru.txt).
 
-To get a build from GitHub, open [Actions → macOS build](https://github.com/fenix007/FoxyVPN/actions/workflows/macos-tests.yml),
+To get a development build, open [Actions → macOS build](https://github.com/fenix007/FoxyVPN/actions/workflows/macos-tests.yml),
 click **Run workflow**, wait for a successful run, then download
 **FoxyVPN-macos-arm64** from the run's **Artifacts** section. Sign in to GitHub
 and extract the downloaded artifact ZIP to get the DMG and its SHA-256 checksum.

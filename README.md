@@ -95,7 +95,28 @@ Developers can build a shareable DMG with `macos/scripts/package-app.sh`.
 
 See the [macOS setup and limitations](macos/README.md) before connecting.
 
-## Download desktop builds from GitHub Actions
+## Download macOS and Windows releases
+
+Ready-made builds are attached to [GitHub Releases](https://github.com/fenix007/FoxyVPN/releases/latest).
+You can also open [Tags](https://github.com/fenix007/FoxyVPN/tags) and click
+**Downloads** next to a released version. No GitHub sign-in is needed to download
+public release assets:
+
+- [Download for Mac with Apple Silicon (macOS 14+)](https://github.com/fenix007/FoxyVPN/releases/latest/download/FoxyVPN-macos-arm64.dmg)
+- [Download for Windows 10/11 x64](https://github.com/fenix007/FoxyVPN/releases/latest/download/FoxyVPN-windows-x64.zip)
+- [SHA-256 checksums](https://github.com/fenix007/FoxyVPN/releases/latest/download/SHA256SUMS-desktop.txt)
+
+Open the DMG and drag the app into Applications on Mac. On Windows, extract the
+entire ZIP and run FoxyVPN.exe. Release downloads stay available until removed.
+Mac builds are ad-hoc signed without Apple notarization; Windows builds are unsigned.
+
+The **Desktop release** workflow builds the exact source commit of each pushed
+`vX.Y.Z` tag, tests both platforms and publishes only after both builds succeed.
+For an existing tag, run **Actions → Desktop release → Run workflow** and enter
+its name. Alternatively, update `.github/desktop-release-tag` and push to `main`
+to request publication of that existing tag without moving it.
+
+## Download development builds from GitHub Actions
 
 In this repository's [Actions tab](https://github.com/fenix007/FoxyVPN/actions),
 select **macOS build** or **Windows build**, then **Run workflow → Run workflow**.
@@ -114,7 +135,8 @@ When a run finishes successfully, open it and download the installer from
 Extract the downloaded artifact ZIP to get the DMG or Windows ZIP, then send that
 file to the recipient. Artifacts are kept for 30 days. These builds use the same
 signing as local builds: macOS is ad-hoc signed without Apple notarization and
-Windows is unsigned. They are not automatically published to GitHub Releases.
+Windows is unsigned. Ordinary branch builds remain in Actions; tagged desktop
+releases are published separately by **Desktop release**.
 
 ## Windows (experimental)
 

@@ -16,6 +16,6 @@
 
 Windows builds are unsigned and experimental. The GitHub workflow builds and
 checks the complete package and saves the ZIP and its SHA-256 checksum as an
-Actions artifact; it does not create a GitHub Release. The protocol backend's
-redistribution terms above remain unresolved. No credentials or private runtime
-files belong in a build archive.
+Actions artifact. The separate Desktop release workflow attaches tagged builds
+to GitHub Releases. The protocol backend's redistribution terms above remain
+unresolved. No credentials or private runtime files belong in a build archive.

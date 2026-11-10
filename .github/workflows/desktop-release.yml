@@ -1,0 +1,89 @@
+name: Desktop release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+    branches: [main]
+    paths: [".github/desktop-release-tag"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing version tag to build and publish (for example v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the existing tag to an immutable commit
+        id: version
+        env:
+          REQUESTED_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            tag="$REQUESTED_TAG"
+          elif [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$(cat .github/desktop-release-tag)"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo 'Expected an existing vX.Y.Z tag' >&2
+            exit 1
+          }
+          sha="$(git rev-parse --verify "refs/tags/$tag^{commit}")"
+          printf 'tag=%s\nsha=%s\n' "$tag" "$sha" >> "$GITHUB_OUTPUT"
+          printf 'Build %s from %s\n' "$tag" "$sha"
+
+  macos:
+    needs: version
+    uses: ./.github/workflows/macos-tests.yml
+    with:
+      source_ref: ${{ needs.version.outputs.sha }}
+
+  windows:
+    needs: version
+    uses: ./.github/workflows/windows-build.yml
+    with:
+      source_ref: ${{ needs.version.outputs.sha }}
+
+  publish:
+    needs: [version, macos, windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    concurrency:
+      group: desktop-release-${{ needs.version.outputs.tag }}
+      cancel-in-progress: false
+    steps:
+      # Use this run's publishing code while the builders use the tagged source.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: FoxyVPN-*
+          merge-multiple: true
+          path: downloads
+      - name: Verify packages and publish release downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          SOURCE_SHA: ${{ needs.version.outputs.sha }}
+        run: .github/scripts/publish-desktop-release.sh
