@@ -72,7 +72,7 @@ available. Read the macOS [setup and known limitations](macos/README.md) before 
 ## 🚀 Getting Started
 
 1. **Get a Firefox account**: If you don't already have one, create an account at [accounts.firefox.com](https://accounts.firefox.com).
-2. **Download & Install (Android)**: Grab the latest APK matching your device (`arm64-v8a`, `armeabi-v7a`, or `universal`) from the [upstream Android releases](https://github.com/Vauth/FoxyVPN/releases) page. For macOS, use the source build below.
+2. **Download & Install (Android)**: Grab the latest APK matching your device (`arm64-v8a`, `armeabi-v7a`, or `universal`) from the [upstream Android releases](https://github.com/Vauth/FoxyVPN/releases) page. For macOS, see the [installation instructions](macos/README.md#install-a-ready-made-build).
 3. **Sign In**: Tap "Sign in with Firefox" to authenticate via the in-app browser.
 4. **Connect**: Choose a server location and tap the power button.
 
@@ -87,12 +87,34 @@ An Apple Silicon macOS client is available in [`macos/`](macos/README.md).
 It provides Firefox Account sign-in and a TUN connection for TCP and DNS;
 other UDP traffic is not supported in this initial version.
 
-```sh
-macos/scripts/build-app.sh --install
-open "$HOME/Applications/FoxyVPN.app"
-```
+To install a ready-made build, open the DMG and drag **FoxyVPN.app** into
+**Applications**. The recipient does not need development tools. See the
+[first-launch instructions](macos/README.md#install-a-ready-made-build).
+
+Developers can build a shareable DMG with `macos/scripts/package-app.sh`.
 
 See the [macOS setup and limitations](macos/README.md) before connecting.
+
+## Download desktop builds from GitHub Actions
+
+In this repository's [Actions tab](https://github.com/fenix007/FoxyVPN/actions),
+select **macOS build** or **Windows build**, then **Run workflow → Run workflow**.
+The workflow must be present on the default branch for the manual button to appear.
+Both workflows also run automatically for relevant changes pushed to `main`
+and pull requests targeting `main`.
+
+When a run finishes successfully, open it and download the installer from
+**Artifacts** at the bottom of the page (sign in to GitHub to download):
+
+| Workflow | Artifact | Contents |
+| --- | --- | --- |
+| macOS build | `FoxyVPN-macos-arm64` | DMG for Apple Silicon, macOS 14+, and SHA-256 checksum |
+| Windows build | `FoxyVPN-windows-x64` | Portable ZIP for Windows 10/11 x64 and SHA-256 checksum |
+
+Extract the downloaded artifact ZIP to get the DMG or Windows ZIP, then send that
+file to the recipient. Artifacts are kept for 30 days. These builds use the same
+signing as local builds: macOS is ad-hoc signed without Apple notarization and
+Windows is unsigned. They are not automatically published to GitHub Releases.
 
 ## Windows (experimental)
 

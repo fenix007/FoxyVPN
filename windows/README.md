@@ -4,7 +4,25 @@ Experimental native Windows Forms client for Windows 10/11 x64, with a build
 option for Windows ARM64. Firefox Account sign-in uses Edge WebView2. The local
 protocol backend and sing-box create a dual-stack TUN connection for TCP and DNS.
 
-## Build
+## Download a GitHub Actions build
+
+1. Open the repository's **Actions** tab and select **Windows build**.
+2. Open a successful run, or click **Run workflow** to build the selected branch.
+   The workflow also runs automatically for Windows changes pushed to `main`
+   and pull requests targeting `main`.
+3. At the bottom of the successful run, download **FoxyVPN-windows-x64** from
+   **Artifacts**. You must be signed in to GitHub to download artifacts.
+4. Extract the downloaded artifact ZIP, then extract the contained
+   `FoxyVPN-win-x64.zip` into a local folder. Keep all extracted application files
+   together and run `FoxyVPN.exe` as described below.
+
+The artifact includes a `.zip.sha256` checksum and is retained for 30 days.
+This is a portable Windows 10/11 x64 build; no .NET installation or build tools
+are required on the destination PC. Microsoft Edge WebView2 Runtime is required,
+and is normally already present on Windows 10/11. The workflow does not create
+a GitHub Release.
+
+## Build locally
 
 Install .NET 10 SDK, Go 1.26 or newer, Python 3 and Git. From the repository root:
 
@@ -18,12 +36,13 @@ On macOS/Linux with the same SDKs installed, cross-compile using
 `windows/scripts/build.sh` (or `windows/scripts/build.sh arm64`).
 Set `FOXYVPN_GO_BIN` / `FOXYVPN_DOTNET_BIN` for custom toolchain locations.
 
-Output: `windows/dist/FoxyVPN-win-x64.zip` (or `win-arm64.zip`). .NET is included
+Output: `windows/dist/FoxyVPN-win-x64.zip` (or `win-arm64.zip`). The PowerShell
+builder also writes a `.zip.sha256` checksum beside the archive. .NET is included
 in the application, so the destination PC does not need the .NET runtime.
 The target PC does need Microsoft Edge WebView2 Runtime, normally present on
 Windows 10/11. Dependencies are pinned; see [THIRD_PARTY.md](THIRD_PARTY.md).
-The protocol backend's redistribution terms are unresolved, so complete builds
-are currently intended for local use and are not uploaded to public releases.
+The protocol backend's redistribution terms remain unresolved; build automation
+does not clarify those terms. See the third-party notices before redistributing.
 
 ## Connect
 

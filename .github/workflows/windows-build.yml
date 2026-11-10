@@ -3,14 +3,18 @@ name: Windows build
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/Backend/**", ".github/workflows/windows-build.yml"]
+    paths: ["windows/**", "macos/Backend/**", "LICENSE", ".github/workflows/windows-build.yml"]
   pull_request:
     branches: [main]
-    paths: ["windows/**", "macos/Backend/**", ".github/workflows/windows-build.yml"]
+    paths: ["windows/**", "macos/Backend/**", "LICENSE", ".github/workflows/windows-build.yml"]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -33,5 +37,13 @@ jobs:
       - name: Build and check Windows x64 package
         shell: pwsh
         run: ./windows/scripts/build.ps1
-      # Complete archives remain local to the runner: the protocol backend's
-      # redistribution license is unresolved (windows/THIRD_PARTY.md).
+      - name: Upload Windows x64 package
+        uses: actions/upload-artifact@v7
+        with:
+          name: FoxyVPN-windows-x64
+          path: |
+            windows/dist/FoxyVPN-win-x64.zip
+            windows/dist/FoxyVPN-win-x64.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

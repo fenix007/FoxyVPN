@@ -4,7 +4,45 @@ Native SwiftUI client for Apple Silicon Macs running macOS 14 or newer. This is
 an initial desktop port alongside the Android application. It uses the same
 Firefox Accounts / Mozilla Guardian service and an HTTP/2 CONNECT transport.
 
-## Build and install on this Mac
+## Install a ready-made build
+
+For a non-developer, share `FoxyVPN-<version>-macos-arm64.dmg` produced by the
+packaging command below. The recipient needs an Apple Silicon Mac with macOS 14
+or newer; Intel Macs are not supported. No Xcode, Go, Homebrew or Terminal
+commands are needed to install:
+
+1. Open the DMG and drag **FoxyVPN.app** onto **Applications**.
+2. Open FoxyVPN from Applications. Quit an existing FoxyVPN before replacing it.
+3. This build is ad-hoc signed and not notarized. If macOS blocks the first
+   launch as an unidentified developer, dismiss the alert, open **System
+   Settings → Privacy & Security** and click **Open Anyway** for FoxyVPN.
+   See [Apple's instructions](https://support.apple.com/en-us/102445).
+4. Sign in and connect as described below. Eject the disk image after installing.
+
+The DMG includes [Russian installation instructions](INSTALL.ru.txt).
+
+To get a build from GitHub, open [Actions → macOS build](https://github.com/fenix007/FoxyVPN/actions/workflows/macos-tests.yml),
+click **Run workflow**, wait for a successful run, then download
+**FoxyVPN-macos-arm64** from the run's **Artifacts** section. Sign in to GitHub
+and extract the downloaded artifact ZIP to get the DMG and its SHA-256 checksum.
+Artifacts are kept for 30 days. The workflow also runs for changes to `macos/`
+pushed to `main` and pull requests targeting `main`.
+
+## Build and package for distribution
+
+On the developer's Apple Silicon Mac, run from the repository root:
+
+```sh
+macos/scripts/package-app.sh
+```
+
+This builds the current sources, verifies the app signature, and creates and
+verifies a compressed DMG containing the app, an Applications shortcut and the
+installation instructions. Output: `macos/dist/FoxyVPN-<version>-macos-arm64.dmg`
+and a `.dmg.sha256` checksum. Send the DMG to the recipient; they do not build
+anything. Packaging does not add an Apple Developer ID signature or notarization.
+
+## Build and install on the developer's Mac
 
 Requires Apple's Command Line Tools (`xcode-select --install`); a full Xcode,
 Android Studio, Java and Homebrew are not required.

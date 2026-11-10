@@ -23,6 +23,9 @@ try {
     }
     $Archive = Join-Path $WindowsRoot "dist/FoxyVPN-win-$Architecture.zip"
     Compress-Archive -Path "$Output/*" -DestinationPath $Archive -Force
-    Get-FileHash $Archive -Algorithm SHA256
+    $Checksum = Get-FileHash $Archive -Algorithm SHA256
+    $ChecksumLine = $Checksum.Hash.ToLowerInvariant() + '  ' + (Split-Path $Archive -Leaf) + "`n"
+    [System.IO.File]::WriteAllText("$Archive.sha256", $ChecksumLine, [System.Text.Encoding]::ASCII)
+    $Checksum
     Write-Host "Built $Archive"
 } finally { Pop-Location }

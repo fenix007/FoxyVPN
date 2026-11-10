@@ -1,23 +1,41 @@
-name: macOS tests
+name: macOS build
 
 on:
   push:
     branches: [main]
-    paths: ["macos/**", ".github/workflows/macos-tests.yml"]
+    paths: ["macos/**", "LICENSE", ".github/workflows/macos-tests.yml"]
   pull_request:
     branches: [main]
-    paths: ["macos/**", ".github/workflows/macos-tests.yml"]
+    paths: ["macos/**", "LICENSE", ".github/workflows/macos-tests.yml"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: macos-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    # macos-15 is a standard Apple Silicon runner, matching the backend builder.
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Swift tests
         run: macos/scripts/test.sh
+      - name: Build and verify macOS DMG
+        run: macos/scripts/package-app.sh
+      - name: Upload macOS installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: FoxyVPN-macos-arm64
+          path: |
+            macos/dist/FoxyVPN-*-macos-arm64.dmg
+            macos/dist/FoxyVPN-*-macos-arm64.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0

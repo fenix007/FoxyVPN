@@ -14,6 +14,8 @@
 - Microsoft.Web.WebView2 SDK 1.0.4314.35: Microsoft, proprietary SDK/runtime
   redistribution terms. The Edge WebView2 Runtime is installed separately.
 
-Windows builds are unsigned, experimental local builds. The GitHub workflow
-builds and checks the GUI, without bundling the protocol backend in public
-artifacts. No credentials or private runtime files belong in a build archive.
+Windows builds are unsigned and experimental. The GitHub workflow builds and
+checks the complete package and saves the ZIP and its SHA-256 checksum as an
+Actions artifact; it does not create a GitHub Release. The protocol backend's
+redistribution terms above remain unresolved. No credentials or private runtime
+files belong in a build archive.
