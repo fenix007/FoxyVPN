@@ -11,6 +11,7 @@ app="${FOXYVPN_APP_OUTPUT:-$project_dir/dist/FoxyVPN.app}"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 install -m 755 "$bin_dir/FoxyVPN" "$app/Contents/MacOS/FoxyVPN"
 install -m 755 "$bin_dir/foxyvpn-tunnel" "$app/Contents/Resources/foxyvpn-tunnel"
+install -m 755 "$bin_dir/foxyvpn-relay" "$app/Contents/Resources/foxyvpn-relay"
 install -m 755 "$project_dir/.build/backends/foxyvpn-proxy" "$app/Contents/Resources/foxyvpn-proxy"
 install -m 755 "$project_dir/.build/backends/sing-box" "$app/Contents/Resources/sing-box"
 cp "$project_dir/THIRD_PARTY.md" "$app/Contents/Resources/THIRD_PARTY.md"
@@ -30,7 +31,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>NSPrincipalClass</key><string>NSApplication</string>
 </dict></plist>
 PLIST
-for executable in foxyvpn-tunnel foxyvpn-proxy sing-box; do
+for executable in foxyvpn-tunnel foxyvpn-relay foxyvpn-proxy sing-box; do
   codesign --force --sign - "$app/Contents/Resources/$executable"
 done
 codesign --force --sign - "$app"

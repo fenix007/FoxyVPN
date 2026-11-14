@@ -125,7 +125,7 @@ private final class TunnelHelper {
         guard app.uid != 0, app.uid == backend.uid else {
             throw HelperError("The FoxyVPN processes do not have the same non-root owner.")
         }
-        guard app.name == "FoxyVPN", backend.name == "foxyvpn-proxy" else {
+        guard app.name == "FoxyVPN", ["foxyvpn-proxy", "foxyvpn-relay"].contains(backend.name) else {
             throw HelperError("The requested tunnel process identity is invalid.")
         }
         self.appIdentity = app

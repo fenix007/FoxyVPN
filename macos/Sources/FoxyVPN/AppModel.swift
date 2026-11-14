@@ -40,6 +40,9 @@ struct AppFailure: LocalizedError {
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     enum Phase { case idle, starting, connected, stopping }
+    enum Provider: String, CaseIterable { case firefox, custom }
+    @Published private(set) var provider: Provider = .firefox
+    @Published private(set) var customServer: VPNServerProfile?
     @Published var phase: Phase = .idle
     @Published var status = "VPN отключён"
     @Published var errorMessage: String?
@@ -73,11 +76,31 @@ final class AppModel: ObservableObject {
     private var trafficMeter = TrafficMeter()
     private let trafficKey = "trafficStatistics.v1"
     private let routingKey = "routingSettings.v1"
+    private let providerKey = "vpnProvider.v1"
+    private let serverKeychainAccount = "custom-vpn-server"
 
     var busy: Bool { phase == .starting || phase == .stopping }
-    var canConnect: Bool { signedIn && !countries.isEmpty && countries.contains { $0.code == countryCode } }
+    var canConnect: Bool {
+        if provider == .custom { return customServer != nil }
+        return signedIn && !countries.isEmpty && countries.contains { $0.code == countryCode }
+    }
+    var serverSummary: String {
+        guard let server = customServer else { return "Импортируй профиль своего VPN-сервера." }
+        let address = server.server.contains(":") ? "[\(server.server)]" : server.server
+        return "\(server.name) · \(address):\(server.serverPort)"
+    }
+    var transportSummary: String {
+        let base = "Через VPN доступны TCP и DNS. UDP и QUIC через VPN не поддерживаются."
+        return provider == .firefox ? base + " Доступ и квота зависят от Mozilla." : base
+    }
 
     init() {
+        provider = Provider(rawValue: UserDefaults.standard.string(forKey: providerKey) ?? "") ?? .firefox
+        do {
+            if let data = try KeychainStore.load(account: serverKeychainAccount) {
+                customServer = try VPNServerProfile.decode(data: data)
+            }
+        } catch { errorMessage = "Не удалось загрузить профиль своего сервера. Импортируй его заново." }
         if let data = UserDefaults.standard.data(forKey: routingKey) {
             do { routing = try JSONDecoder().decode(RoutingSettings.self, from: data).validated() }
             catch { errorMessage = "Не удалось загрузить исключения: \(error.localizedDescription)" }
@@ -91,6 +114,42 @@ final class AppModel: ObservableObject {
         catch { errorMessage = error.localizedDescription }
     }
 
+    func selectProvider(_ selected: Provider) {
+        guard phase == .idle else { return }
+        provider = selected
+        UserDefaults.standard.set(selected.rawValue, forKey: providerKey)
+        errorMessage = nil
+        if selected == .firefox && countries.isEmpty {
+            Task { await loadCountries() }
+        }
+    }
+
+    func importServerProfile(from url: URL) throws {
+        guard phase == .idle else { throw AppFailure("Сначала отключи VPN.") }
+        let metadata = try url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard metadata.isRegularFile == true, let size = metadata.fileSize, size > 0, size <= 48 * 1024 else {
+            throw AppFailure("Нужен JSON-профиль сервера размером не более 48 КБ.")
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        let data = try handle.read(upToCount: 48 * 1024 + 1) ?? Data()
+        let profile: VPNServerProfile
+        do { profile = try VPNServerProfile.decode(data: data) }
+        catch { throw AppFailure("Некорректный профиль сервера. Проверь, что выбран профиль подключения FoxyVPN.") }
+        let checkedRouting = try profile.routing.validated()
+        let routingData = try JSONEncoder().encode(checkedRouting)
+        let profileData = try JSONEncoder().encode(profile)
+        // Validate and encode everything before changing any saved or visible state.
+        try KeychainStore.save(profileData, account: serverKeychainAccount)
+        UserDefaults.standard.set(routingData, forKey: routingKey)
+        UserDefaults.standard.set(Provider.custom.rawValue, forKey: providerKey)
+        customServer = profile
+        routing = checkedRouting
+        provider = .custom
+        errorMessage = nil
+        status = "Сервер добавлен. Подключи VPN."
+    }
+
     func saveRouting(_ settings: RoutingSettings) throws {
         let checked = try settings.validated()
         let data = try JSONEncoder().encode(checked)
@@ -99,12 +158,17 @@ final class AppModel: ObservableObject {
     }
 
     var routingSummary: String {
+        if routing.mode == .selectedSites {
+            let clients = routing.routeCodingClients ? " · Claude и Codex" : ""
+            return "Через VPN: доменов \(routing.vpnDomains.count)" + clients
+        }
         let count = routing.directDomains.count + routing.directIPCIDRs.count
-        if routing.bypassRussianDomains { return ".ru, .su, .рф · своих исключений: \(count)" }
-        return count == 0 ? "Только локальная сеть" : "Своих исключений: \(count)"
+        if routing.bypassRussianDomains { return "Весь трафик · .ru, .su, .рф без VPN · исключений: \(count)" }
+        return count == 0 ? "Весь трафик, кроме локальной сети" : "Весь трафик · без VPN: \(count)"
     }
 
     func loadCountries() async {
+        guard provider == .firefox else { return }
         do {
             let fetched = try await ServerDirectory.load()
             countries = fetched
@@ -144,14 +208,15 @@ final class AppModel: ObservableObject {
         trafficMeter.beginSession()
         publishTraffic()
         trafficAvailable = false
-        status = "Подключение к Firefox VPN…"
+        status = provider == .custom ? "Подключение к своему VPN-серверу…" : "Подключение к Firefox VPN…"
         logs = []
         generation = UUID()
         let attempt = generation
         UserDefaults.standard.set(countryCode, forKey: "country")
         let connectionRouting = routing
+        let connectionServer = provider == .custom ? customServer : nil
         startup = Task {
-            do { try await start(attempt: attempt, routing: connectionRouting) }
+            do { try await start(attempt: attempt, routing: connectionRouting, server: connectionServer) }
             catch {
                 guard attempt == generation else { return }
                 let detail = RuntimeSupport.redact(error.localizedDescription)
@@ -169,34 +234,44 @@ final class AppModel: ObservableObject {
         return url
     }
 
-    private func start(attempt: UUID, routing: RoutingSettings) async throws {
+    private func start(attempt: UUID, routing: RoutingSettings, server: VPNServerProfile?) async throws {
         let routingArgument = try routing.helperArgument()
-        let proxy = try resource("foxyvpn-proxy")
-        _ = try resource("sing-box")
+        let core = try resource("sing-box")
         _ = try resource("foxyvpn-tunnel")
         let directory = try makeRunDirectory()
         runDirectory = directory
-        let tokenFile = directory.appendingPathComponent(tokenName)
-        var arguments = ["-country", countryCode, "-verify-exit=false",
-            "-status-file", directory.appendingPathComponent("proxy-status.json").path]
-        if let session = pendingSession {
-            let path = directory.appendingPathComponent("session.txt")
-            try writePrivate(Data((session + "\n").utf8), to: path)
-            arguments += ["-session-token", path.path]
-        } else if let tokens = try KeychainStore.load(), RuntimeSupport.validTokenCache(tokens) {
-            try writePrivate(tokens, to: tokenFile)
-        } else { throw AppFailure("Войди в Firefox Account заново.") }
-
         let port = try availablePort()
-        arguments += ["-listen", "127.0.0.1:\(port)"]
         let process = Process()
-        process.executableURL = proxy
-        process.arguments = arguments
-        var environment = ProcessInfo.processInfo.environment
-        environment["FOXYVPN_STATE_DIR"] = directory.path
-        environment["FOXYVPN_NONINTERACTIVE"] = "1"
-        environment["FOXYVPN_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
-        process.environment = environment
+        if let server {
+            let interface = try await physicalInterface()
+            try Task.checkCancellation()
+            guard attempt == generation else { throw CancellationError() }
+            let configuration = try server.relayConfiguration(port: port, interface: interface)
+            let configFile = directory.appendingPathComponent("relay.json")
+            try writePrivate(configuration, to: configFile)
+            process.executableURL = try resource("foxyvpn-relay")
+            process.arguments = ["--app-pid", String(ProcessInfo.processInfo.processIdentifier),
+                "--core", core.path, "--config", configFile.path]
+        } else {
+            process.executableURL = try resource("foxyvpn-proxy")
+            let tokenFile = directory.appendingPathComponent(tokenName)
+            var arguments = ["-country", countryCode, "-verify-exit=false",
+                "-status-file", directory.appendingPathComponent("proxy-status.json").path]
+            if let session = pendingSession {
+                let path = directory.appendingPathComponent("session.txt")
+                try writePrivate(Data((session + "\n").utf8), to: path)
+                arguments += ["-session-token", path.path]
+            } else if let tokens = try KeychainStore.load(), RuntimeSupport.validTokenCache(tokens) {
+                try writePrivate(tokens, to: tokenFile)
+            } else { throw AppFailure("Войди в Firefox Account заново.") }
+            arguments += ["-listen", "127.0.0.1:\(port)"]
+            process.arguments = arguments
+            var environment = ProcessInfo.processInfo.environment
+            environment["FOXYVPN_STATE_DIR"] = directory.path
+            environment["FOXYVPN_NONINTERACTIVE"] = "1"
+            environment["FOXYVPN_PARENT_PID"] = String(ProcessInfo.processInfo.processIdentifier)
+            process.environment = environment
+        }
         process.standardInput = FileHandle.nullDevice
         let output = Pipe()
         process.standardOutput = output
@@ -215,22 +290,28 @@ final class AppModel: ObservableObject {
         pipe = output
         try process.run()
         var ready = false
-        for _ in 0..<900 {
+        for _ in 0..<(server == nil ? 900 : 50) {
             try Task.checkCancellation()
             guard attempt == generation else { throw CancellationError() }
             guard process.isRunning else {
                 // Pipe delivery can trail process exit; retain the primary auth error.
                 try await Task.sleep(for: .milliseconds(100))
-                if logs.contains(where: { $0.contains("errno 138") || $0.contains("Unconfirmed session") }) {
+                if server == nil && logs.contains(where: { $0.contains("errno 138") || $0.contains("Unconfirmed session") }) {
                     throw AppFailure("Mozilla ещё не подтвердила вход. Выйди из аккаунта в FoxyVPN, войди заново и заверши подтверждение в окне входа или по письму Mozilla.")
                 }
+                if server != nil { throw AppFailure("Не удалось запустить подключение к своему серверу. \(logs.last ?? "Проверь профиль подключения.")") }
                 throw AppFailure("Не удалось подключиться к Firefox VPN. \(logs.last ?? "Проверь учётную запись и подключение к сети.")")
             }
             try saveTokens()
-            if logs.contains(where: { $0.contains("SOCKS5 proxy started") }) { ready = true; break }
+            if logs.contains(where: { $0.contains("SOCKS5 proxy started") || (server != nil && $0.contains("sing-box started")) }) {
+                ready = true
+                break
+            }
             try await Task.sleep(for: .milliseconds(200))
         }
-        guard ready else { throw AppFailure("Сервер Firefox VPN не ответил за 3 минуты.") }
+        guard ready else {
+            throw AppFailure(server == nil ? "Сервер Firefox VPN не ответил за 3 минуты." : "Локальное подключение к своему серверу не запустилось за 10 секунд.")
+        }
         status = "Проверка соединения…"
         let probe = try await command("/usr/bin/curl", ["--silent", "--show-error", "--fail", "--max-time", "25",
             "--socks5-hostname", "127.0.0.1:\(port)", "https://www.cloudflare.com/cdn-cgi/trace"])
@@ -272,7 +353,7 @@ final class AppModel: ObservableObject {
                 catch { self.monitor = nil; await self.stop(reason: error.localizedDescription); return }
                 if !process.isRunning {
                     self.monitor = nil
-                    await self.stop(reason: "Соединение с Firefox VPN завершилось. \(self.logs.last ?? "")")
+                    await self.stop(reason: "Соединение с VPN-сервером завершилось. \(self.logs.last ?? "")")
                     return
                 }
                 if let state = self.readTunnelStatus(), state.phase != "running" {
@@ -302,7 +383,8 @@ final class AppModel: ObservableObject {
         try? saveTokens()
         let process = backend
         if process?.isRunning == true { process?.terminate() }
-        for _ in 0..<30 {
+        // Allow the relay to finish its own 3-second child shutdown first.
+        for _ in 0..<50 {
             if process?.isRunning != true { break }
             try? await Task.sleep(for: .milliseconds(100))
         }
@@ -365,7 +447,11 @@ final class AppModel: ObservableObject {
         outputBuffer += text
         if outputBuffer.utf8.count > 128 * 1024 { outputBuffer = String(outputBuffer.suffix(8_192)) }
         while let newline = outputBuffer.firstIndex(of: "\n") {
-            let line = RuntimeSupport.redact(String(outputBuffer[..<newline]))
+            var line = String(outputBuffer[..<newline])
+            if let password = customServer?.password, !password.isEmpty {
+                line = line.replacingOccurrences(of: password, with: "[скрыто]")
+            }
+            line = RuntimeSupport.redact(line)
             outputBuffer.removeSubrange(...newline)
             if !line.isEmpty { logs.append(line) }
         }
@@ -417,6 +503,21 @@ final class AppModel: ObservableObject {
         let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         try handle.write(contentsOf: data)
         try handle.close()
+    }
+
+    private func physicalInterface() async throws -> String {
+        let result = try await command("/sbin/route", ["-n", "get", "default"])
+        guard result.status == 0,
+              let line = result.output.split(separator: "\n").first(where: {
+                  $0.trimmingCharacters(in: .whitespaces).hasPrefix("interface:")
+              }), let separator = line.firstIndex(of: ":") else {
+            throw AppFailure("Не удалось определить сетевой интерфейс для VPN-сервера.")
+        }
+        let interface = String(line[line.index(after: separator)...]).trimmingCharacters(in: .whitespaces)
+        guard interface.range(of: #"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$"#, options: .regularExpression) != nil else {
+            throw AppFailure("Некорректный сетевой интерфейс для VPN-сервера.")
+        }
+        return interface
     }
 
     private func availablePort() throws -> Int {

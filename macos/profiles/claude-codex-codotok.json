@@ -1,0 +1,18 @@
+{
+  "mode": "selectedSites",
+  "vpnDomains": [
+    "anthropic.com",
+    "chatgpt.com",
+    "claude.ai",
+    "claude.com",
+    "claudeusercontent.com",
+    "codotok.sale",
+    "oaistatic.com",
+    "oaiusercontent.com",
+    "openai.com"
+  ],
+  "routeCodingClients": true,
+  "bypassRussianDomains": false,
+  "directDomains": [],
+  "directIPCIDRs": []
+}

@@ -8,24 +8,29 @@ struct Launcher {
         if CommandLine.arguments.contains("--self-test") {
             do {
                 guard let resources = Bundle.main.resourceURL else { throw AppFailure("Нет ресурсов приложения") }
-                for name in ["foxyvpn-proxy", "sing-box", "foxyvpn-tunnel"] {
+                for name in ["foxyvpn-proxy", "sing-box", "foxyvpn-tunnel", "foxyvpn-relay"] {
                     guard FileManager.default.isExecutableFile(atPath: resources.appendingPathComponent(name).path) else {
                         throw AppFailure("Не найден \(name)")
                     }
                 }
-                let routing = try RoutingSettings.parse("example.com\n203.0.113.0/24\n2001:db8::/32", bypassRussianDomains: true)
-                let configuration = try TunnelConfiguration.data(port: 1088, interface: "en0", routing: routing)
-                let file = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("foxyvpn-check-" + UUID().uuidString + ".json")
-                try configuration.write(to: file)
-                defer { try? FileManager.default.removeItem(at: file) }
-                let check = Process()
-                check.executableURL = resources.appendingPathComponent("sing-box")
-                check.arguments = ["check", "-c", file.path]
-                try check.run()
-                check.waitUntilExit()
-                guard check.terminationStatus == 0 else {
-                    throw AppFailure("Сетевое ядро отклонило конфигурацию туннеля")
+                for mode in RoutingMode.allCases {
+                    let routing = try RoutingSettings.parse("example.com\n203.0.113.0/24\n2001:db8::/32",
+                        bypassRussianDomains: true, mode: mode,
+                        vpnDomainsText: RoutingSettings.codingDomains.joined(separator: "\n"),
+                        routeCodingClients: true)
+                    let configuration = try TunnelConfiguration.data(port: 1088, interface: "en0", routing: routing)
+                    let file = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("foxyvpn-check-" + UUID().uuidString + ".json")
+                    try configuration.write(to: file)
+                    defer { try? FileManager.default.removeItem(at: file) }
+                    let check = Process()
+                    check.executableURL = resources.appendingPathComponent("sing-box")
+                    check.arguments = ["check", "-c", file.path]
+                    try check.run()
+                    check.waitUntilExit()
+                    guard check.terminationStatus == 0 else {
+                        throw AppFailure("Сетевое ядро отклонило конфигурацию туннеля: \(mode.rawValue)")
+                    }
                 }
                 print("FoxyVPN macOS: app resources and tunnel configuration OK")
                 return
@@ -87,7 +92,7 @@ struct ContentView: View {
                     .font(.system(size: 34)).foregroundStyle(.orange)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("FoxyVPN").font(.title.bold())
-                    Text("Firefox VPN для macOS").foregroundStyle(.secondary)
+                    Text("Firefox VPN и свой сервер").foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("Неофициальный клиент").font(.caption).foregroundStyle(.secondary)
@@ -107,37 +112,45 @@ struct ContentView: View {
 
             GroupBox {
                 VStack(alignment: .leading, spacing: 14) {
-                    HStack {
-                        Label(model.signedIn ? "Firefox Account подключён" : "Вход в Firefox Account", systemImage: "person.crop.circle")
-                        Spacer()
-                        if model.signedIn {
-                            Button("Выйти") { model.signOut() }.disabled(model.phase != .idle)
-                        } else {
-                            Button("Войти…") { model.showLogin = true }.disabled(model.phase != .idle)
+                    Picker("VPN-сервер", selection: Binding(get: { model.provider }, set: { model.selectProvider($0) })) {
+                        Text("Firefox VPN").tag(AppModel.Provider.firefox)
+                        Text("Свой сервер").tag(AppModel.Provider.custom)
+                    }.disabled(model.phase != .idle)
+                    if model.provider == .custom {
+                        ServerProfileView(model: model)
+                    } else {
+                        HStack {
+                            Label(model.signedIn ? "Firefox Account подключён" : "Вход в Firefox Account", systemImage: "person.crop.circle")
+                            Spacer()
+                            if model.signedIn {
+                                Button("Выйти") { model.signOut() }.disabled(model.phase != .idle)
+                            } else {
+                                Button("Войти…") { model.showLogin = true }.disabled(model.phase != .idle)
+                            }
                         }
-                    }
-                    Divider()
-                    HStack {
-                        Text("Страна")
-                        Spacer()
-                        if model.countries.isEmpty {
-                            Text("Загрузка списка…").foregroundStyle(.secondary)
-                        } else {
-                            Picker("Страна", selection: $model.countryCode) {
-                                ForEach(model.countries) { country in
-                                    Text("\(country.name) (\(country.code))").tag(country.code)
-                                }
-                            }.labelsHidden().frame(maxWidth: 250).disabled(model.phase != .idle)
+                        Divider()
+                        HStack {
+                            Text("Страна")
+                            Spacer()
+                            if model.countries.isEmpty {
+                                Text("Загрузка списка…").foregroundStyle(.secondary)
+                            } else {
+                                Picker("Страна", selection: $model.countryCode) {
+                                    ForEach(model.countries) { country in
+                                        Text("\(country.name) (\(country.code))").tag(country.code)
+                                    }
+                                }.labelsHidden().frame(maxWidth: 250).disabled(model.phase != .idle)
+                            }
                         }
-                    }
-                    if let error = model.directoryError {
-                        Text(error).font(.caption).foregroundStyle(.red)
-                        Button("Загрузить страны ещё раз") { Task { await model.loadCountries() } }
+                        if let error = model.directoryError {
+                            Text(error).font(.caption).foregroundStyle(.red)
+                            Button("Загрузить страны ещё раз") { Task { await model.loadCountries() } }
+                        }
                     }
                     Divider()
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("Сайты без VPN")
+                            Text("Маршрутизация")
                             Text(model.routingSummary).font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -162,7 +175,7 @@ struct ContentView: View {
             .disabled(model.phase == .stopping || (model.phase == .idle && !model.canConnect))
             .keyboardShortcut(.defaultAction)
 
-            Text("Туннель для TCP и DNS. UDP-приложения и QUIC пока не поддерживаются. Доступ и квота зависят от Mozilla.")
+            Text(model.transportSummary)
                 .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
             HStack {
                 Text("Закрытие окна оставляет VPN в строке меню.").font(.caption).foregroundStyle(.secondary)

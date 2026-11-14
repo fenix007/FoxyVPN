@@ -103,9 +103,11 @@ no credentials are supplied by this repository.
   version and uses the TUN interface's 64-bit counters, including packet headers.
   Traffic that bypasses the TUN is not counted; these are not Mozilla quota figures.
 - IPv4 and IPv6 TCP traffic uses the macOS TUN interface.
-- DNS queries are intercepted and resolved using HTTPS through the proxy.
-- UDP other than DNS is rejected. QUIC can fall back to TCP in browsers;
-  UDP-only games, voice calls and other UDP applications are not supported.
+- DNS queries are intercepted and resolved using HTTPS, with direct/proxy DNS
+  selected consistently with the routing rules.
+- UDP sent through the VPN other than DNS is rejected. QUIC can fall back to TCP in browsers;
+  UDP-only games and voice calls cannot use the VPN; in selected mode,
+  unrelated applications can use UDP directly.
 - Local network traffic bypasses the VPN.
 - Firefox control-plane traffic and the upstream transport bypass the tunnel
   to avoid recursively sending the VPN connection into itself. Its service
@@ -118,12 +120,76 @@ no credentials are supplied by this repository.
   This was observed with the system resolver using Google DNS over QUIC.
   Port 53 interception does not cover that connection. DNS leak protection is
   incomplete; a different DNS country alone does not establish the route.
-- Android-only features such as per-app split tunneling and tiles are not
-  available in the initial Mac client.
+- The Mac client has fixed Claude/Codex process rules; an arbitrary application
+  picker and Android quick-setting tiles are not available.
+
+## Connect to your Codotok VPN server
+
+The updated macOS client can connect to your own server instead of Mozilla.
+Choose **Сервер → Свой сервер**, click **Импортировать профиль сервера…**, and
+select the private `codotok-vpn.foxyvpn.json` from your download. Click
+**Подключить VPN**. Firefox sign-in is not required for this mode.
+
+The Codotok VPS runs a separate sing-box Shadowsocks 2022 server at
+`5.253.63.18:18443` (TCP, AES-256-GCM). This is a VPN transport; it is separate
+from the Codotok API at `https://codotok.sale/v1`. The connection profile includes
+a dedicated VPN key and must remain private. It is stored in the macOS Keychain.
+
+The delivered server profile sends traffic through that VPS, with `.ru`, `.su`,
+`.рф` and `codotok.sale` direct. The Codotok site/API remains direct to avoid a
+loop to the same server. Edit **Маршрутизация** to choose other exceptions or the
+coding-services-only mode. Importing a server profile applies its initial routing
+settings. Routing-only profiles below select traffic; they do not add a server.
+
+Only the unprivileged relay receives the remote key. It creates a loopback SOCKS
+proxy; the existing privileged TUN helper receives the local port and restricted
+routing rules. A relay supervisor stops the child core if the app exits. The key
+is never passed in process arguments or stored in preferences.
+
+Server deployment and maintenance are described in
+[`deploy/codotok-vpn/README.md`](../deploy/codotok-vpn/README.md).
+
+## Routing Claude, Codex and Codotok
+
+Open **Маршрутизация → Настроить…**. Choose **Выбранные сайты и клиенты**,
+then **Добавить Claude, Codex и Codotok**. This adds the service domains,
+including `codotok.sale`, and enables rules for the native CLI/desktop clients.
+Other traffic uses the direct connection. Browser traffic to the listed domains
+also uses the VPN. Add the domain of a custom API gateway to the same list.
+
+Alternatively, choose **Весь трафик** to send traffic through the VPN with the
+existing direct exceptions below. This remains the default for existing settings.
+The direct list, local network and Firefox transport take precedence over the
+selected VPN domains and clients. Save, then reconnect for changes to take effect.
+
+Use **Импортировать профиль…** in the routing settings to load one of these
+files. Review the fields, click **Сохранить**, then reconnect. Import replaces the
+routing draft, including its direct list; cancel to retain your saved settings.
+Ready settings files use the restricted FoxyVPN schema:
+
+- [`profiles/claude-codex-codotok.json`](profiles/claude-codex-codotok.json): selected
+  coding services/clients through VPN, everything else direct.
+- [`profiles/all-except-direct.json`](profiles/all-except-direct.json): full VPN
+  with `.ru`, `.su`, `.рф` direct. Add specific direct domains/IPs as needed.
+
+The files contain no API credentials. The presets route network connections;
+Codotok's API remains `https://codotok.sale/v1`. No API keys or client providers
+need changing. The list includes domains from the
+[Claude network documentation](https://code.claude.com/docs/en/network-config)
+and the local Codotok project. Routing uses the existing sing-box core, also
+used by [Throne](https://throneproj.github.io/get_started/).
+
+Client matching covers native Claude/Codex executable names and Claude's standard
+versioned native install path. Generic Node/Electron processes and arbitrary
+child tools are not matched. Service domains provide coverage for extensions and
+clients with different process names. As with direct domain exceptions, encrypted
+DNS, cached addresses or hidden TLS names can prevent domain matching.
+Selected VPN traffic supports TCP and DNS; selected UDP/QUIC is rejected so
+clients can fall back to TCP. In selected mode, unrelated UDP remains direct.
 
 ## Sites that bypass the VPN
 
-Open **Сайты без VPN → Настроить…** in the main window. You can enable direct
+Open **Маршрутизация → Настроить…** in the main window. You can enable direct
 connections for `.ru`, `.su`, and `.рф` and add your own domain names, IP addresses,
 or IPv4/IPv6 CIDR ranges, one per line. A domain includes its subdomains. Use
 `example.com`, not a URL with `https://` or a path. Plain domain lists, comments

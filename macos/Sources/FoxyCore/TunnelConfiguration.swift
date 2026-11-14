@@ -42,10 +42,14 @@ public enum TunnelConfiguration {
             ["action": "sniff"],
             ["protocol": "dns", "action": "hijack-dns"],
             ["port": 53, "action": "hijack-dns"],
-            ["process_name": ["foxyvpn-proxy"], "action": "route", "outbound": "direct"],
+            ["process_name": ["foxyvpn-proxy", "foxyvpn-relay", "sing-box"], "action": "route", "outbound": "direct"],
             ["ip_is_private": true, "action": "route", "outbound": "direct"],
-            ["network": "udp", "action": "reject"],
+            ["domain_suffix": bootstrapDomains, "action": "route", "outbound": "direct"],
         ]
+        if routing.mode == .allTraffic {
+            // The upstream SOCKS transport supports TCP and DNS only.
+            routeRules.append(["network": "udp", "action": "reject"])
+        }
         if !routing.domainSuffixes.isEmpty {
             dnsRules.append(["domain_suffix": routing.domainSuffixes, "action": "route", "server": "bootstrap-dns"])
             routeRules.append(["domain_suffix": routing.domainSuffixes, "action": "route", "outbound": "direct"])
@@ -53,6 +57,25 @@ public enum TunnelConfiguration {
         if !routing.directIPCIDRs.isEmpty {
             routeRules.append(["ip_cidr": routing.directIPCIDRs, "action": "route", "outbound": "direct"])
         }
+
+        if routing.mode == .selectedSites {
+            // Direct exceptions take precedence over selected domains and clients.
+            if !routing.vpnDomains.isEmpty {
+                dnsRules.append(["domain_suffix": routing.vpnDomains, "action": "route", "server": "remote-dns"])
+                routeRules.append(["domain_suffix": routing.vpnDomains, "network": "udp", "action": "reject"])
+                routeRules.append(["domain_suffix": routing.vpnDomains, "action": "route", "outbound": "proxy"])
+            }
+            if routing.routeCodingClients {
+                // System DNS often belongs to mDNSResponder; domain rules handle that path.
+                dnsRules.append(["process_name": RoutingSettings.codingProcessNames, "action": "route", "server": "remote-dns"])
+                routeRules.append(["process_name": RoutingSettings.codingProcessNames, "network": "udp", "action": "reject"])
+                routeRules.append(["process_name": RoutingSettings.codingProcessNames, "action": "route", "outbound": "proxy"])
+                dnsRules.append(["process_path_regex": RoutingSettings.codingProcessPathRegex, "action": "route", "server": "remote-dns"])
+                routeRules.append(["process_path_regex": RoutingSettings.codingProcessPathRegex, "network": "udp", "action": "reject"])
+                routeRules.append(["process_path_regex": RoutingSettings.codingProcessPathRegex, "action": "route", "outbound": "proxy"])
+            }
+        }
+        let selected = routing.mode == .selectedSites
 
         let configuration: [String: Any] = [
             "log": [
@@ -85,7 +108,7 @@ public enum TunnelConfiguration {
                     ],
                 ],
                 "rules": dnsRules,
-                "final": "remote-dns",
+                "final": selected ? "bootstrap-dns" : "remote-dns",
                 "strategy": "prefer_ipv4",
                 "independent_cache": true,
                 "reverse_mapping": true,
@@ -120,7 +143,7 @@ public enum TunnelConfiguration {
             ],
             "route": [
                 "rules": routeRules,
-                "final": "proxy",
+                "final": selected ? "direct" : "proxy",
                 "default_domain_resolver": "bootstrap-dns",
                 "auto_detect_interface": true,
             ],
