@@ -6,12 +6,14 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "FoxyVPN", targets: ["FoxyVPN"]),
-        .executable(name: "foxyvpn-tunnel", targets: ["TunnelHelper"])
+        .executable(name: "foxyvpn-tunnel", targets: ["TunnelHelper"]),
+        .executable(name: "foxyvpn-relay", targets: ["RelayHelper"])
     ],
     targets: [
         .target(name: "FoxyCore"),
         .executableTarget(name: "FoxyVPN", dependencies: ["FoxyCore"]),
         .executableTarget(name: "TunnelHelper", dependencies: ["FoxyCore"]),
+        .executableTarget(name: "RelayHelper"),
         .testTarget(name: "FoxyCoreTests", dependencies: ["FoxyCore"]),
         .testTarget(name: "FoxyVPNTests", dependencies: ["FoxyVPN"])
     ]

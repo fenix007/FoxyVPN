@@ -1,0 +1,22 @@
+name: codotok-vpn
+services:
+  vpn:
+    image: ${VPN_IMAGE:?Set immutable sing-box image digest}
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+    user: "1001:1001"
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.75
+    pids_limit: 64
+    ports:
+      - "18443:18443/tcp"
+    volumes:
+      - ./server.json:/etc/sing-box/config.json:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"

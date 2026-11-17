@@ -1,0 +1,18 @@
+{
+  "mode": "allTraffic",
+  "vpnDomains": [
+    "anthropic.com",
+    "chatgpt.com",
+    "claude.ai",
+    "claude.com",
+    "claudeusercontent.com",
+    "codotok.sale",
+    "oaistatic.com",
+    "oaiusercontent.com",
+    "openai.com"
+  ],
+  "routeCodingClients": true,
+  "bypassRussianDomains": true,
+  "directDomains": [],
+  "directIPCIDRs": []
+}

@@ -1,0 +1,4 @@
+.env
+server.json
+*.foxyvpn.json
+__pycache__/
