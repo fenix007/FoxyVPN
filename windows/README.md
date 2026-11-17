@@ -71,6 +71,23 @@ Traffic statistics show received/sent bytes, current speed and saved lifetime
 usage for this Windows installation. Counters start at connection and include
 TUN packet headers; direct traffic is excluded. These are not Mozilla quota data.
 Country and totals are saved in `%LOCALAPPDATA%\FoxyVPN`.
+
+With VPN disconnected, sign in and click **Тест выбранной** to test one country,
+or **Тест всех локаций** to check every country sequentially. Download estimates
+appear beside each country in the location list, in **Мбит/с** (Mbps). You can
+open the list during testing to inspect completed results. **Остановить тест**
+cancels the current check and keeps completed results. Results last until the
+application closes; errors and timeouts are shown separately for each country.
+
+Each check starts a temporary, country-specific SOCKS proxy without creating a
+TUN adapter or changing system routes. A short download from the
+[Cloudflare speed-test endpoint](https://github.com/cloudflare/speedtest)
+uses up to 5 MB or 5 seconds of sampling per country, with a 45-second limit
+including connection setup. Test downloads consume the account's VPN quota.
+These are approximate download speeds to the test service; actual speeds vary
+with network conditions and destination. Normal VPN connection is available
+again after testing stops.
+
 Credentials use Windows DPAPI for the current user. Temporary backend tokens
 are stored in a directory restricted to the current user and SYSTEM, removed
 on disconnect. A crash can leave such a private directory until the next launch, which cleans

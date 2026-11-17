@@ -3,10 +3,10 @@ name: Windows build
 on:
   push:
     branches: [main]
-    paths: ["windows/**", "macos/Backend/**", "LICENSE", ".github/workflows/windows-build.yml"]
+    paths: ["windows/**", "macos/Backend/**", "assets/branding/**", "scripts/prepare-branding.ps1", "LICENSE", ".github/workflows/windows-build.yml"]
   pull_request:
     branches: [main]
-    paths: ["windows/**", "macos/Backend/**", "LICENSE", ".github/workflows/windows-build.yml"]
+    paths: ["windows/**", "macos/Backend/**", "assets/branding/**", "scripts/prepare-branding.ps1", "LICENSE", ".github/workflows/windows-build.yml"]
   workflow_dispatch:
   workflow_call:
     inputs:

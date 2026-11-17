@@ -145,6 +145,20 @@
     <string name="server_list_tcp_unavailable">Unavailable</string>
     <string name="server_list_checking_tcp">Checking…</string>
     <string name="server_list_load_failed">Failed to load server list</string>
+    <string name="speed_test_selected">Test selected</string>
+    <string name="speed_test_all">Test all locations</string>
+    <string name="speed_test_stop">Stop test</string>
+    <string name="speed_test_location">Test speed in %1$s</string>
+    <string name="speed_test_quota_notice">Short download test: up to 5 MB per location. Uses your VPN quota.</string>
+    <string name="speed_test_disconnect_first">Disconnect VPN before testing location speeds.</string>
+    <string name="speed_test_progress">Locations tested: %1$d / %2$d</string>
+    <string name="speed_test_queued">Speed: queued</string>
+    <string name="speed_test_running">Testing download speed…</string>
+    <string name="speed_test_mbps">↓ %1$.1f Mbps</string>
+    <string name="speed_test_failed">Speed test failed</string>
+    <string name="speed_test_timeout">Speed test timed out</string>
+    <string name="speed_test_cancelled">Speed test cancelled</string>
+    <string name="speed_test_untested">Speed: not tested</string>
 
     <string name="logs_title_all">Logs (%1$d)</string>
     <string name="logs_title_filtered">Logs (%1$d/%2$d)</string>

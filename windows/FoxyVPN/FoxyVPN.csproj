@@ -4,6 +4,7 @@
     <UseWindowsForms>true</UseWindowsForms><EnableWindowsTargeting>true</EnableWindowsTargeting>
     <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <ApplicationManifest>app.manifest</ApplicationManifest><AssemblyName>FoxyVPN</AssemblyName>
+    <ApplicationIcon>Assets/FoxyVPN.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../FoxyVPN.Core/FoxyVPN.Core.csproj" /><PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" /></ItemGroup>
   <Target Name="RemoveUnusedWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">

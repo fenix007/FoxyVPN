@@ -53,6 +53,7 @@ available. Read the macOS [setup and known limitations](macos/README.md) before 
 - **Real-Time Traffic & Latency Diagnostics**
 - **Public & Exit IP Detection**
 - **Global Server Locations**
+- **Location Download Speed Tests** (Windows, Android and macOS)
 - **Quick Settings Tile & Home Screen Widget**
 - **Release Update Checks & Notifications**
 - **Diagnostic Logging & Export**
@@ -80,6 +81,22 @@ available. Read the macOS [setup and known limitations](macos/README.md) before 
 > Access, entitlement, quota, and geographic availability are controlled by Mozilla. FoxyVPN connects directly to official endpoints and respects account quotas.
 
 <br>
+
+## Compare location speeds
+
+Disconnect VPN before starting a test. In the location list, choose **Test
+selected** / **Тест выбранной** or **Test all locations** / **Тест всех локаций**.
+On Android, you can also tap the speedometer beside a city. Short download
+estimates appear beside the country or city in **Mbps / Мбит/с**. Tests run
+sequentially and can be stopped; finished results remain visible. On Android,
+leaving the location screen stops testing and keeps results for the signed-in
+session. Desktop results last until the app closes.
+
+Each location downloads up to **5 MB** and samples for up to **5 seconds**, using
+the account's VPN quota. These are approximate download rates to Cloudflare's
+test service and vary with network conditions and destination. Testing uses
+a temporary local proxy without creating a system VPN tunnel. Android uses the
+same sing-box transport and connection settings as its normal VPN connection.
 
 ## macOS (initial native port)
 

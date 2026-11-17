@@ -52,4 +52,5 @@ const string directory = """
 """;
 var countries = ServerDirectory.Parse(Encoding.UTF8.GetBytes(directory));
 Check(countries.Count == 1 && countries[0].Code == "DE", "directory filters quarantine and unsupported protocols");
+await LocationSpeedTests.RunAsync(Check);
 Console.WriteLine($"{passed} checks passed.");

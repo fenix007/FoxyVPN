@@ -87,6 +87,7 @@ fun HomeScreen(
     onOpenSettings: () -> Unit,
 ) {
     val state by FoxyVpnService.state.collectAsStateWithLifecycle()
+    val locationTesting by FoxyVpnService.locationTestRunning.collectAsStateWithLifecycle()
     val proxyOnlyActive by FoxyVpnService.proxyOnlyActive.collectAsStateWithLifecycle()
     val lastError by FoxyVpnService.lastError.collectAsStateWithLifecycle()
     val liveStats by FoxyVpnService.vpnLiveStats.collectAsStateWithLifecycle()
@@ -194,7 +195,7 @@ fun HomeScreen(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    IconButton(onClick = onOpenSettings) {
+                    IconButton(onClick = onOpenSettings, enabled = !locationTesting) {
                         Icon(
                             imageVector = Icons.Filled.Settings,
                             contentDescription = stringResource(R.string.settings_title),
@@ -230,7 +231,7 @@ fun HomeScreen(
                         Modifier.size(180.dp)
                             .clip(CircleShape)
                             .background(ringColor.copy(alpha = 0.15f))
-                            .clickable(role = Role.Button) {
+                            .clickable(role = Role.Button, enabled = !locationTesting) {
                                 if (state == ConnectionState.DISCONNECTED) onRequestConnect()
                                 else onDisconnect()
                             },

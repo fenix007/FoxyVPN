@@ -70,6 +70,26 @@ internal sealed class VpnSession : IDisposable
     }
     public async Task ConnectAsync(string country, string? session, CancellationToken cancellationToken)
     {
+        var port = await StartProxyAsync(country, session, cancellationToken);
+        var config = Path.Combine(directory, "tunnel.json");
+        await File.WriteAllTextAsync(config, TunnelConfiguration.Create(port), cancellationToken);
+        await CheckConfigAsync(config, cancellationToken);
+        var tunnel = Start("sing-box.exe", ["run", "-c", config]);
+        for (var i = 0; i < 150; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (processes.Any(p => p.HasExited)) throw new IOException("VPN-процесс завершился. Подробности в журнале.");
+            if (FindAdapter() is not null) { Connected = true; return; }
+            await Task.Delay(200, cancellationToken);
+        }
+        throw new TimeoutException("Windows не подтвердила запуск VPN-туннеля за 30 секунд.");
+    }
+    // A location probe only needs SOCKS; it must never create a TUN adapter or change routes.
+    public async Task<int> StartProxyAsync(string country, string? session, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        ObjectDisposedException.ThrowIf(disposed, this);
+        if (processes.Count != 0) throw new InvalidOperationException("Прокси уже запущен.");
         if (country.Length != 2 || !country.All(char.IsAsciiLetterUpper)) throw new ArgumentException("Некорректная страна.");
         var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start(); var port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
@@ -91,25 +111,15 @@ internal sealed class VpnSession : IDisposable
         {
             if (line.Contains("SOCKS5 proxy started", StringComparison.Ordinal)) ready.TrySetResult();
         });
-        var exited = proxy.WaitForExitAsync(cancellationToken);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(180));
+        var exited = proxy.WaitForExitAsync(timeout.Token);
         var winner = await Task.WhenAny(ready.Task, exited).WaitAsync(timeout.Token);
+        timeout.Token.ThrowIfCancellationRequested();
         if (winner != ready.Task || proxy.HasExited) throw new IOException("Не удалось запустить VPN. Проверь журнал и доступ аккаунта к Firefox VPN.");
         await ready.Task;
         SaveTokens();
-        var config = Path.Combine(directory, "tunnel.json");
-        await File.WriteAllTextAsync(config, TunnelConfiguration.Create(port), cancellationToken);
-        await CheckConfigAsync(config, cancellationToken);
-        var tunnel = Start("sing-box.exe", ["run", "-c", config]);
-        for (var i = 0; i < 150; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (proxy.HasExited || tunnel.HasExited) throw new IOException("VPN-процесс завершился. Подробности в журнале.");
-            if (FindAdapter() is not null) { Connected = true; return; }
-            await Task.Delay(200, cancellationToken);
-        }
-        throw new TimeoutException("Windows не подтвердила запуск VPN-туннеля за 30 секунд.");
+        return port;
     }
     internal static async Task CheckConfigAsync(string path, CancellationToken token)
     {

@@ -14,6 +14,8 @@ import android.net.NetworkRequest
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
@@ -47,13 +49,17 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.SetupOptions
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
@@ -65,6 +71,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 
 data class VpnLiveStats(
     val txRateBytesPerSec: Long = 0L,
@@ -134,6 +141,25 @@ class FoxyVpnService : VpnService() {
     private val retryNotBeforeElapsedMs = AtomicLong(0L)
     private var controllerSecret = UUID.randomUUID().toString()
     @Volatile private var activePlatformInterface: FoxyPlatformInterface? = null
+    @Volatile private var locationTestRequest: LocationTestRequest? = null
+
+    private class LocationTestRequest(val candidate: ProxyCandidate) {
+        val id = UUID.randomUUID().toString()
+        val result = CompletableDeferred<LocationSpeedResult>()
+        val finished = CompletableDeferred<Unit>()
+        val accepted = CompletableDeferred<Unit>()
+        var started = false // guarded by credentialCommitLock
+        @Volatile var cancelled = false
+        @Volatile var job: Job? = null
+        @Volatile var interrupt: (() -> Unit)? = null
+        @Volatile var server: CommandServer? = null
+
+        fun cancel() {
+            cancelled = true
+            job?.cancel()
+            interrupt?.invoke()
+        }
+    }
 
     private class SessionResources(
         val commandServer: CommandServer?,
@@ -248,6 +274,8 @@ class FoxyVpnService : VpnService() {
 
     override fun onDestroy() {
         stopping = true
+        val destroyedTest = locationTestRequest ?: synchronized(credentialCommitLock) { pendingLocationTest }
+        destroyedTest?.cancel()
         synchronized(credentialCommitLock) {
             connectionGeneration.incrementAndGet()
             if (coreOwner === this) Libbox.setBearerToken("")
@@ -269,6 +297,7 @@ class FoxyVpnService : VpnService() {
                 opMutex.withLock { teardown() }
             } finally {
                 scope.cancel()
+                if (destroyedTest != null) finishLocationTest(destroyedTest)
             }
         }
         (applicationContext as FoxyVpnApp)
@@ -338,14 +367,29 @@ class FoxyVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_CONNECT
+        if (action == ACTION_LOCATION_SPEED_TEST) {
+            startLocationSpeedTest(intent, startId)
+            return START_NOT_STICKY
+        }
         if (action == ACTION_CONNECT || action == VpnService.SERVICE_INTERFACE) {
-            if (_state.value != ConnectionState.DISCONNECTED) {
-                AppLogger.d(TAG, "ignoring duplicate connect request while ${_state.value}")
-                enterForeground(statusLabel)
-                return START_STICKY
+            synchronized(credentialCommitLock) {
+                if (_locationTestRunning.value) {
+                    if (locationTestRequest?.result?.isCompleted == true) {
+                        exitForeground()
+                        stopSelf()
+                    } else {
+                        enterForeground("Testing location speed\u2026")
+                    }
+                    return START_NOT_STICKY
+                }
+                if (_state.value != ConnectionState.DISCONNECTED) {
+                    AppLogger.d(TAG, "ignoring duplicate connect request while ${_state.value}")
+                    enterForeground(statusLabel)
+                    return START_STICKY
+                }
+                _state.value = ConnectionState.CONNECTING
             }
             stopping = false
-            _state.value = ConnectionState.CONNECTING
             _lastError.value = null
             statusLabel = "Connecting\u2026"
             enterForeground(statusLabel)
@@ -359,6 +403,163 @@ class FoxyVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
+    private fun startLocationSpeedTest(intent: Intent?, startId: Int) {
+        val request = synchronized(credentialCommitLock) {
+            pendingLocationTest?.takeIf { it.id == intent?.getStringExtra(EXTRA_LOCATION_TEST_ID) }
+                ?.also { it.started = true; it.accepted.complete(Unit) }
+        }
+        if (request == null || locationTestRequest === request) {
+            if (request == null && locationTestRequest == null && !_locationTestRunning.value && _state.value == ConnectionState.DISCONNECTED) {
+                enterForeground("Testing location speed\u2026")
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf(startId)
+            }
+            return
+        }
+        locationTestRequest = request
+        stopping = false
+        enterForeground("Testing ${request.candidate.countryName} / ${request.candidate.cityCode}\u2026")
+        request.interrupt = { scope.launch { interruptNativeStart(request.server) } }
+        var measured: LocationSpeedResult? = null
+        var failure: Exception? = null
+        val job = scope.launch {
+            try {
+                opMutex.withLock {
+                    if (request.cancelled) throw CancellationException("Location test cancelled")
+                    measured = runLocationSpeedTest(request)
+                }
+            } catch (error: Exception) {
+                failure = error
+                if (error is CancellationException) throw error
+            }
+        }
+        request.job = job
+        job.invokeOnCompletion { error ->
+            // Main-thread completion cannot interleave with another start intent.
+            // Publish the result only after the core and credentials are released.
+            Handler(Looper.getMainLooper()).post {
+                if (request.finished.isCompleted) return@post
+                request.interrupt = null
+                val testError = error ?: failure
+                if (testError != null) request.result.completeExceptionally(testError)
+                else measured?.let { request.result.complete(it) }
+                    ?: request.result.completeExceptionally(IllegalStateException("Location test returned no result"))
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                // Requests from widgets can advance startId while a test owns
+                // the service. They are ignored, so none should keep it alive.
+                stopSelf()
+            }
+        }
+        if (request.cancelled) job.cancel()
+    }
+
+    private fun finishLocationTest(request: LocationTestRequest) {
+        if (locationTestRequest === request) locationTestRequest = null
+        synchronized(credentialCommitLock) {
+            if (pendingLocationTest === request) {
+                pendingLocationTest = null
+                _locationTestRunning.value = false
+            }
+        }
+        request.result.completeExceptionally(CancellationException("Location test service stopped"))
+        request.finished.complete(Unit)
+    }
+
+    private suspend fun runLocationSpeedTest(request: LocationTestRequest): LocationSpeedResult {
+        val app = applicationContext as FoxyVpnApp
+        val epoch = app.tokenStore.sessionEpoch
+        var platform: FoxyPlatformInterface? = null
+        try {
+            synchronized(credentialCommitLock) {
+                check(_state.value == ConnectionState.DISCONNECTED && coreOwner == null) {
+                    "Disconnect the VPN before testing locations"
+                }
+                check(!request.cancelled) { "Location test cancelled" }
+                coreOwner = this
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isAlwaysOn) {
+                error("Turn off Android always-on VPN before testing locations")
+            }
+            val port = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1")).use { it.localPort }
+            val username = UUID.randomUUID().toString()
+            val password = UUID.randomUUID().toString()
+            val settings = app.settingsStore.tunnelSnapshot().copy(
+                proxyOnlyMode = true,
+                automaticRecovery = false,
+                socksBindAddress = SettingsStore.DEFAULT_SOCKS_BIND_ADDRESS,
+                socksPort = port,
+                localProxyAuthEnabled = true,
+                localProxyUsername = username,
+                localProxyPassword = password,
+            )
+            ListenerAvailability.requireAvailable(listOf(
+                settings.socksBindAddress to port,
+                SettingsStore.DEFAULT_SOCKS_BIND_ADDRESS to SettingsStore.CONTROLLER_PORT,
+            ))
+            nativeProtectionRequired = false
+            ControlPlaneHttp.socketProtector = null
+            ControlPlaneHttp.networkProvider = { firstUsableNetwork() }
+            val pass = withTimeout(30_000L) {
+                var auth = app.authRepository.ensureFreshAccessToken()
+                if (app.tokenStore.sessionEpoch != epoch) throw TokenInvalidError("Session changed")
+                try {
+                    app.guardianClient.fetchProxyPass(GUARDIAN_ENDPOINT_DEFAULT, auth.accessToken)
+                } catch (_: TokenInvalidError) {
+                    auth = app.authRepository.refreshAccessToken() ?: auth
+                    if (app.tokenStore.sessionEpoch != epoch) throw TokenInvalidError("Session changed")
+                    app.guardianClient.activateGuardian(GUARDIAN_ENDPOINT_DEFAULT, auth.accessToken)
+                    app.guardianClient.fetchProxyPass(GUARDIAN_ENDPOINT_DEFAULT, auth.accessToken)
+                }
+            }
+            validateProxyPass(pass)
+            val configuration = SingBoxConfigBuilder.build(
+                primaryCandidate = request.candidate,
+                settings = settings,
+                bearerToken = pass.token,
+                appPackageName = packageName,
+                controllerSecret = UUID.randomUUID().toString(),
+            )
+            app.tokenStore.withCurrentSession(epoch) {
+                synchronized(credentialCommitLock) {
+                    if (request.cancelled) throw CancellationException("Location test cancelled")
+                    Libbox.setBearerToken(pass.token)
+                }
+            }
+            ensureLibboxSetup()
+            Libbox.checkConfig(configuration)
+            val testPlatform = FoxyPlatformInterface(this, includeOnly = false, allowTun = false) {
+                error("A location speed test must not open a VPN interface")
+            }
+            platform = testPlatform
+            runCatching { File(filesDir, "command.sock").delete() }
+            val server = CommandServer(testPlatform, testPlatform)
+            request.server = server
+            if (request.cancelled) throw CancellationException("Location test cancelled")
+            server.start()
+            server.startOrReloadService(configuration, OverrideOptions())
+            if (request.cancelled) throw CancellationException("Location test cancelled")
+            val measured = LocationSpeedTest.measure(port, username, password)
+            app.tokenStore.withCurrentSession(epoch) {
+                check(pass.expiresAtEpochSeconds?.let { it > System.currentTimeMillis() / 1_000L } != false) {
+                    "Location test credentials expired"
+                }
+            }
+            return measured
+        } finally {
+            // This block has no suspension: cancellation cannot skip native cleanup.
+            releaseResources(SessionResources(request.server, platform))
+            request.server = null
+            synchronized(credentialCommitLock) {
+                if (coreOwner === this) {
+                    Libbox.setBearerToken("")
+                    coreOwner = null
+                    ControlPlaneHttp.socketProtector = null
+                    ControlPlaneHttp.networkProvider = null
+                }
+            }
+        }
+    }
+
     internal fun stopFromCore(platform: FoxyPlatformInterface) {
         synchronized(credentialCommitLock) {
             if (coreOwner === this && activePlatformInterface === platform && !stopping) {
@@ -368,6 +569,12 @@ class FoxyVpnService : VpnService() {
     }
 
     private fun requestDisconnect(reason: String) {
+        val test = locationTestRequest ?: synchronized(credentialCommitLock) { pendingLocationTest }
+        test?.let {
+            it.cancel()
+            if (it.result.isCompleted) { exitForeground(); stopSelf() }
+            return
+        }
         synchronized(credentialCommitLock) {
             if (stopping) return
             stopping = true
@@ -1291,9 +1498,57 @@ class FoxyVpnService : VpnService() {
         @Volatile private var coreOwner: FoxyVpnService? = null
         const val ACTION_CONNECT = "com.vauth.foxyvpn.action.CONNECT"
         const val ACTION_DISCONNECT = "com.vauth.foxyvpn.action.DISCONNECT"
+        private const val ACTION_LOCATION_SPEED_TEST = "com.vauth.foxyvpn.action.LOCATION_SPEED_TEST"
+        private const val EXTRA_LOCATION_TEST_ID = "location_test_id"
         private const val NOTIFICATION_ID = 1
         private const val REQUEST_CODE_OPEN = 0
         private const val REQUEST_CODE_DISCONNECT = 1
+
+        private val _locationTestRunning = MutableStateFlow(false)
+        val locationTestRunning: StateFlow<Boolean> = _locationTestRunning
+        private var pendingLocationTest: LocationTestRequest? = null
+
+        suspend fun measureLocationSpeed(context: Context, candidate: ProxyCandidate): LocationSpeedResult {
+            val request = synchronized(credentialCommitLock) {
+                check(_state.value == ConnectionState.DISCONNECTED && !_locationTestRunning.value && coreOwner == null) {
+                    "Disconnect the VPN and stop the current test before testing locations"
+                }
+                LocationTestRequest(candidate).also {
+                    pendingLocationTest = it
+                    _locationTestRunning.value = true
+                }
+            }
+            try {
+                try {
+                    context.startForegroundService(
+                        Intent(context, FoxyVpnService::class.java)
+                            .setAction(ACTION_LOCATION_SPEED_TEST)
+                            .putExtra(EXTRA_LOCATION_TEST_ID, request.id)
+                    )
+                    withTimeout(10_000L) { request.accepted.await() }
+                } catch (error: Exception) {
+                    val unstarted = synchronized(credentialCommitLock) {
+                        if (!request.started) {
+                            if (pendingLocationTest === request) {
+                                pendingLocationTest = null
+                                _locationTestRunning.value = false
+                            }
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    if (unstarted) request.finished.complete(Unit)
+                    throw error
+                }
+                return request.result.await()
+            } finally {
+                request.cancel()
+                // Cancellation must not let the next location or a normal VPN
+                // connection claim libbox while this core is still closing.
+                withContext(NonCancellable) { request.finished.await() }
+            }
+        }
 
         private val _proxyOnlyActive = MutableStateFlow(false)
         val proxyOnlyActive: StateFlow<Boolean> = _proxyOnlyActive

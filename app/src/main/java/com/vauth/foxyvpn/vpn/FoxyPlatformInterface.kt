@@ -36,6 +36,7 @@ import java.net.NetworkInterface
 class FoxyPlatformInterface(
     private val vpnService: FoxyVpnService,
     private val includeOnly: Boolean,
+    private val allowTun: Boolean = true,
     private val onTunOpened: () -> Unit,
 ) : PlatformInterface, CommandServerHandler {
 
@@ -63,6 +64,7 @@ class FoxyPlatformInterface(
     }
 
     override fun openTun(options: TunOptions): Int {
+        check(allowTun) { "A location speed test cannot create a VPN interface" }
         AppLogger.i(TAG, "openTun called with MTU=${options.mtu}")
         val builder =
             vpnService.Builder().setSession("FoxyVPN").setMtu(options.mtu).setBlocking(true)

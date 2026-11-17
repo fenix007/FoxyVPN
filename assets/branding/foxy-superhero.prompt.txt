@@ -1,0 +1,11 @@
+Use case: stylized-concept
+Asset type: FoxyVPN application icon for macOS, Windows, and Android; one square master image.
+Primary request: A joyful, mischievous orange fox as a tiny privacy superhero. Make it funny, charming, distinctive, and immediately readable at small icon sizes.
+Subject: One oversized fox head, tall expressive ears, creamy cheek fluff, a playful wink, and a small confident smile. A simple turquoise superhero eye mask. Its enormous fluffy orange tail curls around its lower cheeks into a soft protective shield shape, with a cream tail tip. Keep the tail shape clear and uncomplicated.
+Scene/backdrop: A rich midnight-blue square background with a subtle teal glow behind the fox. The background fills the entire square; do not draw an outer rounded app-icon container.
+Style/medium: Premium playful sculpted 3D character, tactile soft clay-like surfaces, bold clean shapes, restrained detail, polished studio rendering.
+Composition/framing: Centered, front-facing, close-up iconic silhouette. Fox fills approximately 78 percent of the canvas; keep ears, cheeks, and tail fully inside the frame. The face must remain recognizable at 32 pixels.
+Lighting/mood: Warm, cheerful, gently mischievous; soft studio light, broad highlights, subtle ambient shadow.
+Color palette: Saturated tangerine fur, warm cream cheeks and tail tip, turquoise mask, deep midnight blue background.
+Text: None.
+Constraints: One finished icon, no variations grid, no presentation mockup, no lettering, no watermark. Original fox character with its own silhouette. No extra props, padlocks, globes, flags, tiny interface symbols, or busy background.

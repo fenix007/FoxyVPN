@@ -27,6 +27,7 @@ import com.vauth.foxyvpn.ui.theme.ThemeController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.vauth.foxyvpn.vpn.FoxyVpnService
 
 object FoxyRoutes {
     const val SPLASH = "splash"
@@ -48,6 +49,7 @@ fun FoxyNavGraph(
     val context = LocalContext.current
     val sessionScope = rememberCoroutineScope()
     var signingOut by remember { mutableStateOf(false) }
+    val locationTesting by FoxyVpnService.locationTestRunning.collectAsStateWithLifecycle()
     NavHost(navController = navController, startDestination = FoxyRoutes.SPLASH) {
         composable(FoxyRoutes.SPLASH) {
             SplashScreen(
@@ -95,13 +97,16 @@ fun FoxyNavGraph(
                 onOpenSettings = { navController.navigate(FoxyRoutes.SETTINGS) },
             )
         }
-        composable(FoxyRoutes.SERVERS) {
+        composable(FoxyRoutes.SERVERS) { entry ->
+            val homeEntry = remember(entry) { navController.getBackStackEntry(FoxyRoutes.HOME) }
             val serverListModel: ServerListViewModel =
                 viewModel(
+                    viewModelStoreOwner = homeEntry,
                     factory =
                         ServerListViewModel.factory(
                             serverListClient = container.serverListClient,
                             proxyStateStore = container.proxyStateStore,
+                            context = context,
                         )
                 )
             ServerListScreen(
@@ -120,7 +125,7 @@ fun FoxyNavGraph(
             SettingsScreen(
                 settingsStore = container.settingsStore,
                 onOpenLogs = { navController.navigate(FoxyRoutes.LOGS) },
-                signOutInProgress = signingOut,
+                signOutInProgress = signingOut || locationTesting,
                 onCheckForUpdates = {
                     updater?.check(automatic = false)
                 },
@@ -132,7 +137,7 @@ fun FoxyNavGraph(
                     autoUpdates = enabled
                 },
                 onSignOut = signOut@{
-                    if (signingOut) return@signOut
+                    if (signingOut || FoxyVpnService.locationTestRunning.value) return@signOut
                     signingOut = true
                     val epoch = container.tokenStore.sessionEpoch
                     onDisconnect()

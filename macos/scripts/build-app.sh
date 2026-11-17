@@ -3,6 +3,7 @@ set -euo pipefail
 project_dir="$(cd "$(dirname "$0")/.." && pwd)"
 configuration="${FOXYVPN_CONFIGURATION:-release}"
 case "$configuration" in release|debug) ;; *) echo "Invalid configuration" >&2; exit 1 ;; esac
+bash "$project_dir/scripts/prepare-branding.sh"
 "$project_dir/scripts/prepare-backends.sh"
 cd "$project_dir"
 swift build -c "$configuration"
@@ -13,6 +14,7 @@ install -m 755 "$bin_dir/FoxyVPN" "$app/Contents/MacOS/FoxyVPN"
 install -m 755 "$bin_dir/foxyvpn-tunnel" "$app/Contents/Resources/foxyvpn-tunnel"
 install -m 755 "$project_dir/.build/backends/foxyvpn-proxy" "$app/Contents/Resources/foxyvpn-proxy"
 install -m 755 "$project_dir/.build/backends/sing-box" "$app/Contents/Resources/sing-box"
+install -m 644 "$project_dir/.build/branding/FoxyVPN.icns" "$app/Contents/Resources/FoxyVPN.icns"
 cp "$project_dir/THIRD_PARTY.md" "$app/Contents/Resources/THIRD_PARTY.md"
 cat > "$app/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -22,6 +24,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>com.vauth.foxyvpn.macos</string>
 <key>CFBundleName</key><string>FoxyVPN</string>
 <key>CFBundleDisplayName</key><string>FoxyVPN</string>
+<key>CFBundleIconFile</key><string>FoxyVPN.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>

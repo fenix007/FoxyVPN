@@ -2,6 +2,9 @@ package com.vauth.foxyvpn.ui.screens
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -24,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -42,9 +47,12 @@ import com.vauth.foxyvpn.data.ProxyStateStore
 import com.vauth.foxyvpn.data.RECOMMENDED_COUNTRY_CODE
 import com.vauth.foxyvpn.data.ServerListClient
 import com.vauth.foxyvpn.data.model.VpnCountry
+import com.vauth.foxyvpn.data.model.ConnectionState
 import com.vauth.foxyvpn.data.model.emojiFlag
 import com.vauth.foxyvpn.ui.ServerListViewModel
 import com.vauth.foxyvpn.ui.ServerPingState
+import com.vauth.foxyvpn.ui.ServerSpeedState
+import com.vauth.foxyvpn.vpn.FoxyVpnService
 
 private sealed class LocationRow {
     data class RecommendedRow(val country: VpnCountry) : LocationRow()
@@ -61,7 +69,7 @@ fun ServerListScreen(
     onServerSelected: () -> Unit,
     onBack: () -> Unit,
     viewModel: ServerListViewModel =
-        viewModel(factory = ServerListViewModel.factory(serverListClient, proxyStateStore)),
+        viewModel(factory = ServerListViewModel.factory(serverListClient, proxyStateStore, LocalContext.current)),
 ) {
     ServerListScreen(
         viewModel = viewModel,
@@ -83,8 +91,20 @@ fun ServerListScreen(
     val isLoading = state.isLoading
     val errorMessage = state.errorMessage
     val selectedState by proxyStateStore.selectedProxyFlow.collectAsStateWithLifecycle()
+    val connectionState by FoxyVpnService.state.collectAsStateWithLifecycle()
+    val serviceTesting by FoxyVpnService.locationTestRunning.collectAsStateWithLifecycle()
+    val testing = state.isSpeedTesting || serviceTesting
+    val canTest = !testing && connectionState == ConnectionState.DISCONNECTED
     val snackbarHost = remember { SnackbarHostState() }
     val context = LocalContext.current
+
+    DisposableEffect(viewModel) {
+        onDispose { viewModel.stopSpeedTests() }
+    }
+
+    LaunchedEffect(viewModel) {
+        viewModel.loadServerList(force = true)
+    }
 
     LaunchedEffect(errorMessage) {
         val message = errorMessage
@@ -154,6 +174,38 @@ fun ServerListScreen(
                     }
                 else ->
                     LazyColumn(Modifier.selectableGroup()) {
+                        item(key = "speed-test-controls") {
+                            Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    TextButton(
+                                        enabled = canTest && selectedState != null,
+                                        onClick = viewModel::testSelectedLocation,
+                                    ) { Text(stringResource(R.string.speed_test_selected)) }
+                                    TextButton(
+                                        enabled = state.isSpeedTesting || canTest,
+                                        onClick = {
+                                            if (state.isSpeedTesting) viewModel.stopSpeedTests()
+                                            else viewModel.testAllLocations()
+                                        },
+                                    ) {
+                                        Text(stringResource(if (state.isSpeedTesting) R.string.speed_test_stop else R.string.speed_test_all))
+                                    }
+                                }
+                                Text(
+                                    stringResource(R.string.speed_test_quota_notice),
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                                if (connectionState != ConnectionState.DISCONNECTED && !testing) {
+                                    Text(stringResource(R.string.speed_test_disconnect_first), style = MaterialTheme.typography.bodySmall)
+                                }
+                                if (state.isSpeedTesting) {
+                                    Text(
+                                        stringResource(R.string.speed_test_progress, state.speedTestCompleted, state.speedTestTotal),
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                            }
+                        }
                         items(
                             rows,
                             key = { row ->
@@ -180,19 +232,28 @@ fun ServerListScreen(
                                             )
                                         },
                                         supportingContent = {
-                                            Text(stringResource(R.string.server_list_recommended_desc))
+                                            Column {
+                                                Text(stringResource(R.string.server_list_recommended_desc))
+                                                SpeedResult(state.speedResults["${row.country.code}:"], state.speedStates["${row.country.code}:"])
+                                            }
                                         },
                                         trailingContent = {
-                                            if (row.country.code == selected?.countryCode) {
-                                                Icon(
-                                                    Icons.Filled.CheckCircle,
-                                                    contentDescription = null,
-                                                )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                if (row.country.code == selected?.countryCode) {
+                                                    Icon(Icons.Filled.CheckCircle, contentDescription = null)
+                                                }
+                                                IconButton(
+                                                    enabled = canTest,
+                                                    onClick = { viewModel.testLocation(ServerListClient.candidatesForCountry(countries, row.country.code)) },
+                                                ) {
+                                                    Icon(Icons.Filled.Speed, contentDescription = stringResource(R.string.speed_test_location, row.country.name))
+                                                }
                                             }
                                         },
                                         modifier =
                                             Modifier.padding(horizontal = 8.dp)
                                                 .selectable(
+                                                    enabled = !testing,
                                                     selected =
                                                         row.country.code == selected?.countryCode,
                                                     role = Role.RadioButton,
@@ -202,7 +263,7 @@ fun ServerListScreen(
                                                                 countries,
                                                                 row.country.code,
                                                             )
-                                                        val chosen = candidates.randomOrNull()
+                                                        val chosen = viewModel.preferredCandidate(candidates)
                                                         if (chosen != null) {
                                                             viewModel.selectCandidate(chosen)
                                                             onServerSelected()
@@ -283,22 +344,28 @@ fun ServerListScreen(
                                                     else ->
                                                         stringResource(R.string.server_list_checking_tcp)
                                                 }
-                                            Text("$serverLabel \u2022 $pingLabel")
+                                            Column {
+                                                Text("$serverLabel \u2022 $pingLabel")
+                                                SpeedResult(state.speedResults[pingKey], state.speedStates[pingKey])
+                                            }
                                         },
                                         trailingContent = {
-                                            if (
-                                                row.country.code == selected?.countryCode &&
-                                                    city.code == selected?.cityCode
-                                            ) {
-                                                Icon(
-                                                    Icons.Filled.CheckCircle,
-                                                    contentDescription = null,
-                                                )
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                if (row.country.code == selected?.countryCode && city.code == selected?.cityCode) {
+                                                    Icon(Icons.Filled.CheckCircle, contentDescription = null)
+                                                }
+                                                IconButton(
+                                                    enabled = canTest && available.isNotEmpty(),
+                                                    onClick = { viewModel.testLocation(available) },
+                                                ) {
+                                                    Icon(Icons.Filled.Speed, contentDescription = stringResource(R.string.speed_test_location, city.code))
+                                                }
                                             }
                                         },
                                         modifier =
                                             Modifier.padding(start = 24.dp, end = 8.dp)
                                                 .selectable(
+                                                    enabled = !testing,
                                                     selected =
                                                         row.country.code == selected?.countryCode &&
                                                             city.code == selected?.cityCode,
@@ -310,7 +377,7 @@ fun ServerListScreen(
                                                                 row.country.code,
                                                                 city.code,
                                                             )
-                                                        val chosen = candidates.randomOrNull()
+                                                        val chosen = viewModel.preferredCandidate(candidates)
                                                         if (chosen != null) {
                                                             viewModel.selectCandidate(chosen)
                                                             onServerSelected()
@@ -332,4 +399,18 @@ fun ServerListScreen(
             }
         }
     }
+}
+
+@Composable
+private fun SpeedResult(megabitsPerSecond: Double?, state: ServerSpeedState?) {
+    val label = when (state) {
+        ServerSpeedState.QUEUED -> stringResource(R.string.speed_test_queued)
+        ServerSpeedState.RUNNING -> stringResource(R.string.speed_test_running)
+        ServerSpeedState.DONE -> megabitsPerSecond?.let { stringResource(R.string.speed_test_mbps, it) }
+        ServerSpeedState.FAILED -> stringResource(R.string.speed_test_failed)
+        ServerSpeedState.TIMED_OUT -> stringResource(R.string.speed_test_timeout)
+        ServerSpeedState.CANCELLED -> stringResource(R.string.speed_test_cancelled)
+        null -> stringResource(R.string.speed_test_untested)
+    }
+    if (label != null) Text(label, color = if (state == ServerSpeedState.FAILED || state == ServerSpeedState.TIMED_OUT) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
 }

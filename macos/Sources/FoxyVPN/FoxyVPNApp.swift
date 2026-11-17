@@ -46,13 +46,17 @@ struct FoxyVPNApp: App {
         WindowGroup("FoxyVPN", id: "main") {
             ContentView(model: model)
         }
-        .defaultSize(width: 540, height: 610)
+        .defaultSize(width: 540, height: 740)
         .windowResizability(.contentMinSize)
         .commands {
             CommandGroup(replacing: .newItem) { }
         }
         MenuBarExtra("FoxyVPN", systemImage: model.phase == .connected ? "network.badge.shield.half.filled" : "network") {
             Text(model.status)
+            if model.isTestingLocations {
+                Text(model.speedTestStatus)
+                Button("Остановить тест локаций") { model.cancelLocationTests() }
+            }
             Text("↓ \(TrafficView.bytes(model.traffic.session.received))   ↑ \(TrafficView.bytes(model.traffic.session.sent))")
             if model.phase == .connected {
                 Button("Отключить") { model.disconnect() }
@@ -81,6 +85,7 @@ struct ContentView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        ScrollView(.vertical) {
         VStack(spacing: 24) {
             HStack(spacing: 12) {
                 Image(systemName: "network.badge.shield.half.filled")
@@ -111,9 +116,9 @@ struct ContentView: View {
                         Label(model.signedIn ? "Firefox Account подключён" : "Вход в Firefox Account", systemImage: "person.crop.circle")
                         Spacer()
                         if model.signedIn {
-                            Button("Выйти") { model.signOut() }.disabled(model.phase != .idle)
+                            Button("Выйти") { model.signOut() }.disabled(model.phase != .idle || model.isTestingLocations)
                         } else {
-                            Button("Войти…") { model.showLogin = true }.disabled(model.phase != .idle)
+                            Button("Войти…") { model.showLogin = true }.disabled(model.phase != .idle || model.isTestingLocations)
                         }
                     }
                     Divider()
@@ -125,10 +130,24 @@ struct ContentView: View {
                         } else {
                             Picker("Страна", selection: $model.countryCode) {
                                 ForEach(model.countries) { country in
-                                    Text("\(country.name) (\(country.code))").tag(country.code)
+                                    Text("\(country.name) (\(country.code)) — \(model.locationSpeeds[country.code] ?? "не проверено")").tag(country.code)
                                 }
-                            }.labelsHidden().frame(maxWidth: 250).disabled(model.phase != .idle)
+                            }.labelsHidden().frame(maxWidth: 360).disabled(model.phase != .idle)
                         }
+                    }
+                    HStack {
+                        Button("Тест выбранной") { model.testLocations(all: false) }
+                            .disabled(!model.canTestLocations)
+                        Button(model.isTestingLocations ? "Остановить тест" : "Тест всех локаций") {
+                            if model.isTestingLocations { model.cancelLocationTests() }
+                            else { model.testLocations(all: true) }
+                        }.disabled(!model.isTestingLocations && !model.canTestLocations)
+                        if model.isTestingLocations { ProgressView().controlSize(.small) }
+                    }
+                    Text("Тест загрузки: до 5 МБ на локацию, расходует квоту VPN. Перед тестом отключи VPN.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !model.speedTestStatus.isEmpty {
+                        Text(model.speedTestStatus).font(.caption).foregroundStyle(.secondary)
                     }
                     if let error = model.directoryError {
                         Text(error).font(.caption).foregroundStyle(.red)
@@ -178,6 +197,8 @@ struct ContentView: View {
             }
         }
         .padding(28).frame(minWidth: 500, maxWidth: 680)
+        }
+        .frame(minWidth: 500, minHeight: 580)
         .task { await model.loadCountries() }
         .sheet(isPresented: $model.showLogin) {
             FirefoxLoginView(onSession: model.acceptSession, onCancel: { model.showLogin = false })

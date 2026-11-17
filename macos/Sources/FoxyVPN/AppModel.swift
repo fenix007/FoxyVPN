@@ -37,6 +37,20 @@ struct AppFailure: LocalizedError {
 }
 
 @MainActor
+private final class ProxyStartupState {
+    private var buffer = ""
+    private(set) var ready = false
+    private(set) var unconfirmedSession = false
+
+    func consume(_ text: String) {
+        buffer += text
+        ready = ready || buffer.contains("SOCKS5 proxy started")
+        unconfirmedSession = unconfirmedSession || buffer.contains("errno 138") || buffer.contains("Unconfirmed session")
+        buffer = String(buffer.suffix(8_192))
+    }
+}
+
+@MainActor
 final class AppModel: ObservableObject {
     static let shared = AppModel()
     enum Phase { case idle, starting, connected, stopping }
@@ -57,6 +71,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var receivedPerSecond: Double = 0
     @Published private(set) var sentPerSecond: Double = 0
     @Published private(set) var trafficAvailable = false
+    @Published private(set) var isTestingLocations = false
+    @Published private(set) var locationSpeeds: [String: String] = [:]
+    @Published private(set) var speedTestStatus = ""
 
     private var pendingSession: String?
     private var backend: Process?
@@ -65,6 +82,8 @@ final class AppModel: ObservableObject {
     private var tunnelDirectory: URL?
     private var startup: Task<Void, Never>?
     private var monitor: Task<Void, Never>?
+    private var speedTest: Task<Void, Never>?
+    private var speedDownload: LocationSpeedDownload?
     private var generation = UUID()
     private var lastSavedTokens: Data?
     private var outputBuffer = ""
@@ -75,7 +94,8 @@ final class AppModel: ObservableObject {
     private let routingKey = "routingSettings.v1"
 
     var busy: Bool { phase == .starting || phase == .stopping }
-    var canConnect: Bool { signedIn && !countries.isEmpty && countries.contains { $0.code == countryCode } }
+    var canConnect: Bool { !isTestingLocations && signedIn && !countries.isEmpty && countries.contains { $0.code == countryCode } }
+    var canTestLocations: Bool { phase == .idle && signedIn && !countries.isEmpty && !isTestingLocations }
 
     init() {
         if let data = UserDefaults.standard.data(forKey: routingKey) {
@@ -105,8 +125,10 @@ final class AppModel: ObservableObject {
     }
 
     func loadCountries() async {
+        guard !isTestingLocations else { return }
         do {
             let fetched = try await ServerDirectory.load()
+            guard !isTestingLocations else { return }
             countries = fetched
             if !fetched.contains(where: { $0.code == countryCode }), let first = fetched.first {
                 countryCode = first.code
@@ -116,7 +138,7 @@ final class AppModel: ObservableObject {
     }
 
     func acceptSession(_ token: String) {
-        guard RuntimeSupport.validSessionToken(token), phase == .idle else { return }
+        guard RuntimeSupport.validSessionToken(token), phase == .idle, !isTestingLocations else { return }
         pendingSession = token
         signedIn = true
         showLogin = false
@@ -125,12 +147,13 @@ final class AppModel: ObservableObject {
     }
 
     func signOut() {
-        guard phase == .idle else { return }
+        guard phase == .idle, !isTestingLocations else { return }
         do {
             try KeychainStore.delete()
             pendingSession = nil
             lastSavedTokens = nil
             signedIn = false
+            locationSpeeds = [:]
             status = "VPN отключён"
             errorMessage = nil
         } catch { errorMessage = error.localizedDescription }
@@ -169,15 +192,14 @@ final class AppModel: ObservableObject {
         return url
     }
 
-    private func start(attempt: UUID, routing: RoutingSettings) async throws {
-        let routingArgument = try routing.helperArgument()
+    // Reused by location tests; SOCKS startup never creates a TUN interface or changes routes.
+    private func startProxy(attempt: UUID, country: String, timeoutSeconds: TimeInterval = 180) async throws -> (Process, Int) {
+        try Task.checkCancellation()
         let proxy = try resource("foxyvpn-proxy")
-        _ = try resource("sing-box")
-        _ = try resource("foxyvpn-tunnel")
         let directory = try makeRunDirectory()
         runDirectory = directory
         let tokenFile = directory.appendingPathComponent(tokenName)
-        var arguments = ["-country", countryCode, "-verify-exit=false",
+        var arguments = ["-country", country, "-verify-exit=false",
             "-status-file", directory.appendingPathComponent("proxy-status.json").path]
         if let session = pendingSession {
             let path = directory.appendingPathComponent("session.txt")
@@ -199,15 +221,17 @@ final class AppModel: ObservableObject {
         process.environment = environment
         process.standardInput = FileHandle.nullDevice
         let output = Pipe()
+        let startupState = ProxyStartupState()
         process.standardOutput = output
         process.standardError = output
         outputBuffer = ""
-        output.fileHandleForReading.readabilityHandler = { [weak self] handle in
+        output.fileHandleForReading.readabilityHandler = { [weak self, weak process] handle in
             let data = handle.availableData
             guard !data.isEmpty else { handle.readabilityHandler = nil; return }
             let text = String(decoding: data, as: UTF8.self)
             Task { @MainActor in
-                guard let self, self.generation == attempt else { return }
+                guard let self, self.generation == attempt, self.backend === process else { return }
+                startupState.consume(text)
                 self.consume(text)
             }
         }
@@ -215,22 +239,34 @@ final class AppModel: ObservableObject {
         pipe = output
         try process.run()
         var ready = false
-        for _ in 0..<900 {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeoutSeconds
+        while ProcessInfo.processInfo.systemUptime < deadline {
             try Task.checkCancellation()
             guard attempt == generation else { throw CancellationError() }
             guard process.isRunning else {
                 // Pipe delivery can trail process exit; retain the primary auth error.
                 try await Task.sleep(for: .milliseconds(100))
-                if logs.contains(where: { $0.contains("errno 138") || $0.contains("Unconfirmed session") }) {
+                if startupState.unconfirmedSession {
                     throw AppFailure("Mozilla ещё не подтвердила вход. Выйди из аккаунта в FoxyVPN, войди заново и заверши подтверждение в окне входа или по письму Mozilla.")
                 }
                 throw AppFailure("Не удалось подключиться к Firefox VPN. \(logs.last ?? "Проверь учётную запись и подключение к сети.")")
             }
             try saveTokens()
-            if logs.contains(where: { $0.contains("SOCKS5 proxy started") }) { ready = true; break }
+            if startupState.ready { ready = true; break }
             try await Task.sleep(for: .milliseconds(200))
         }
-        guard ready else { throw AppFailure("Сервер Firefox VPN не ответил за 3 минуты.") }
+        guard ready else {
+            if timeoutSeconds < 180 { throw LocationSpeedError.timedOut }
+            throw AppFailure("Сервер Firefox VPN не ответил за 3 минуты.")
+        }
+        return (process, port)
+    }
+
+    private func start(attempt: UUID, routing: RoutingSettings) async throws {
+        let routingArgument = try routing.helperArgument()
+        _ = try resource("sing-box")
+        _ = try resource("foxyvpn-tunnel")
+        let (process, port) = try await startProxy(attempt: attempt, country: countryCode)
         status = "Проверка соединения…"
         let probe = try await command("/usr/bin/curl", ["--silent", "--show-error", "--fail", "--max-time", "25",
             "--socks5-hostname", "127.0.0.1:\(port)", "https://www.cloudflare.com/cdn-cgi/trace"])
@@ -284,6 +320,87 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func testLocations(all: Bool) {
+        guard canTestLocations else { return }
+        let locations = all ? countries : countries.filter { $0.code == countryCode }
+        guard !locations.isEmpty else { return }
+        isTestingLocations = true
+        generation = UUID()
+        let attempt = generation
+        for location in locations { locationSpeeds[location.code] = "ожидание…" }
+        speedTest = Task {
+            var successful = 0
+            var completed = 0
+            for location in locations {
+                if Task.isCancelled { break }
+                speedTestStatus = "Тест \(completed + 1)/\(locations.count): \(location.name) — подключение…"
+                locationSpeeds[location.code] = "подключение…"
+                do {
+                    let (_, port) = try await startProxy(attempt: attempt, country: location.code, timeoutSeconds: 45)
+                    try Task.checkCancellation()
+                    guard let directory = runDirectory else { throw CancellationError() }
+                    locationSpeeds[location.code] = "измерение…"
+                    speedTestStatus = "Тест \(completed + 1)/\(locations.count): \(location.name) — загрузка…"
+                    let download = LocationSpeedDownload()
+                    speedDownload = download
+                    let result = try await download.measure(port: port, directory: directory)
+                    let value = result.megabitsPerSecond.formatted(.number.precision(.fractionLength(1)))
+                    locationSpeeds[location.code] = "↓ \(value) Мбит/с"
+                    consume("[Тест \(location.code)] \(value) Мбит/с, \(result.receivedBytes) байт.\n")
+                    successful += 1
+                } catch is CancellationError {
+                    locationSpeeds[location.code] = "отменено"
+                } catch LocationSpeedError.timedOut {
+                    locationSpeeds[location.code] = "тайм-аут"
+                    consume("[Тест \(location.code)] Превышено время ожидания.\n")
+                } catch {
+                    locationSpeeds[location.code] = "ошибка"
+                    consume("[Тест \(location.code)] \(error.localizedDescription)\n")
+                }
+                // Cancellation also reaches this cleanup before another country can start.
+                speedDownload?.cancel()
+                speedDownload = nil
+                await stopLocationProxy()
+                completed += 1
+            }
+            for location in locations where locationSpeeds[location.code] == "ожидание…" {
+                locationSpeeds[location.code] = "не проверено"
+            }
+            let outcome = Task.isCancelled ? "Тест остановлен" : "Тест завершён"
+            speedTestStatus = "\(outcome). Успешно: \(successful)/\(locations.count). Результаты — в списке стран."
+            isTestingLocations = false
+            speedTest = nil
+        }
+    }
+
+    func cancelLocationTests() {
+        speedTest?.cancel()
+        speedDownload?.cancel()
+    }
+
+    private func stopLocationProxy() async {
+        do { try saveTokens() }
+        catch { consume("Не удалось сохранить вход: \(error.localizedDescription)\n") }
+        let process = backend
+        if process?.isRunning == true { process?.terminate() }
+        for _ in 0..<20 {
+            guard process?.isRunning == true else { break }
+            if Task.isCancelled { break }
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if let process, process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+            process.waitUntilExit()
+        }
+        do { try saveTokens() }
+        catch { consume("Не удалось сохранить вход: \(error.localizedDescription)\n") }
+        pipe?.fileHandleForReading.readabilityHandler = nil
+        pipe = nil
+        backend = nil
+        if let directory = runDirectory { try? FileManager.default.removeItem(at: directory) }
+        runDirectory = nil
+    }
+
     func disconnect() {
         guard phase != .idle && phase != .stopping else { return }
         Task { await stop(reason: nil) }
@@ -333,10 +450,23 @@ final class AppModel: ObservableObject {
         trafficMeter.stopSpeed()
         publishTraffic()
         generation = UUID()
+        cancelLocationTests()
         startup?.cancel()
         monitor?.cancel()
         try? saveTokens()
         if backend?.isRunning == true { backend?.terminate() }
+        if isTestingLocations {
+            if let backend, backend.isRunning {
+                kill(backend.processIdentifier, SIGKILL)
+                backend.waitUntilExit()
+            }
+            try? saveTokens()
+            pipe?.fileHandleForReading.readabilityHandler = nil
+            if let directory = runDirectory { try? FileManager.default.removeItem(at: directory) }
+            runDirectory = nil
+            backend = nil
+            pipe = nil
+        }
         // Temporary credential files are removed on next launch if termination interrupts cleanup.
     }
 

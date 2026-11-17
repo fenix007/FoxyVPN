@@ -98,6 +98,20 @@ no credentials are supplied by this repository.
 
 ## Current scope
 
+- With VPN disconnected, **Тест выбранной** measures the selected country;
+  **Тест всех локаций** checks countries sequentially. **Остановить тест** cancels
+  the current request and cleans up its proxy. Download estimates appear as
+  **↓ Мбит/с** in the country picker alongside progress, timeout or error states.
+  The picker remains available during testing; account changes and VPN connection
+  wait for the test to finish. Results remain in memory for this app session.
+- Each speed test uses a separate authenticated SOCKS backend without starting
+  the privileged tunnel helper or changing routes. It downloads up to 5 MB from
+  Cloudflare through that country, sampling at most five seconds of body data.
+  Startup has a 45-second timeout and the download request a 15-second timeout.
+  These tests use Mozilla's traffic quota, including connection overhead. Results
+  are approximate single-download speeds, include HTTPS request setup, and depend on the network, server and
+  account limits; they are separate from the TUN traffic counters below.
+
 - Traffic statistics show received/sent bytes and speed for the current (or last)
   connection, plus a total saved across app restarts. Counting starts with this
   version and uses the TUN interface's 64-bit counters, including packet headers.
